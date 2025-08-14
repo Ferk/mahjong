@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Kyodai Mahjong</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="icon.png">
+    <link rel="manifest" href="manifest.json">
+    <!-- Tailwind CSS for modern UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="effects.js"></script>
+    <script src="mah.js"></script>
+    <style>
+        /* Custom styles for the Mahjong game */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #2c3e50;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            background-color: #34495e;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            display: block;
+        }
+        
+        /* New custom class for message box visibility */
+        .hidden-dialog {
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="w-screen h-screen flex flex-col justify-start items-center relative">
+        <div id="top-bar" class="w-full bg-gray-800 text-white p-2 md:p-4 flex justify-between items-center shadow-md cursor-pointer">
+            <div class="flex items-center space-x-2 md:space-x-4">
+                <span class="text-2xl md:text-3xl"><img width="32" height="32" src="icon.png"/></span>
+                <span id="pairs-remaining-display" class="font-bold text-xl md:text-2xl">Pairs: 0</span>
+            </div>
+            <span id="timer-display" class="font-mono text-2xl md:text-3xl font-bold">00:00</span>
+        </div>
+
+        <!-- Game Canvas, now fills the remaining screen space -->
+        <div class="flex-grow flex justify-center items-center w-full">
+            <canvas id="game-canvas"></canvas>
+        </div>
+
+        <!-- Message Box, repurposed for the game menu and win/loss messages -->
+        <div id="message-box" class="absolute inset-0 bg-black bg-opacity-70 flex justify-center items-center hidden-dialog transition-opacity duration-500 ease-in-out rounded-lg">
+            <div class="bg-white rounded-xl shadow-2xl p-8 text-center transform scale-90 transition-transform duration-500">
+                <h2 class="text-4xl font-bold text-gray-800 mb-4" id="dialog-title"></h2>
+                <div id="dialog-content" class="text-xl text-gray-600 font-medium mb-6"></div>
+                <div id="dialog-buttons" class="flex flex-col space-y-4">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Load service worker ---
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/service-worker.js')
+              .then(registration => {
+                console.log('Service Worker registered with scope:', registration.scope);
+              })
+              .catch(error => {
+                console.log('Service Worker registration failed:', error);
+              });
+          });
+        }
+        
+        // --- Localization Object ---
+        const locales = {
+            'en': {
+                pairsText: 'Pairs:',
+                gamePausedTitle: 'Game Paused',
+                welcomeBackTitle: 'Welcome Back!',
+                welcomeBackContent: 'It looks like you have a game in progress. Would you like to continue?',
+                howToPlayTitle: 'How to Play',
+                howToPlayContent: "Match pairs of identical tiles to clear the board. A tile is 'free' and can be selected if it is not blocked on its left and right sides by another tile and has no tile on top of it. Clear all the tiles to win!",
+                winTitle: 'You Win!',
+                winContent: (pairs, time) => `You cleared all ${pairs} pairs in ${time}!`,
+                gameOverTitle: 'Game Over 😔',
+                noMoreMoves: 'No more valid moves are possible.',
+                resume: 'Resume',
+                howToPlay: 'How to Play',
+                restart: 'Retry',
+                newGame: 'New Game',
+                reviewBoard: 'Review Board',
+                loadingTiles: 'Loading Tiles...',
+                loadingContent: 'Please wait while we prepare the game.'
+            },
+            'es': {
+                pairsText: 'Pares:',
+                gamePausedTitle: 'Juego en Pausa',
+                welcomeBackTitle: '¡Bienvenido de Nuevo!',
+                welcomeBackContent: 'Parece que tienes una partida en curso. ¿Te gustaría continuar?',
+                howToPlayTitle: 'Cómo Jugar',
+                howToPlayContent: "Empareja fichas idénticas para despejar el tablero. Una ficha está 'libre' y se puede seleccionar si no está bloqueada a su izquierda y derecha por otra ficha y no tiene ninguna ficha encima. ¡Despeja todas las fichas para ganar!",
+                winTitle: '¡Has Ganado!',
+                winContent: (pairs, time) => `¡Despejaste todos los ${pairs} pares en ${time}!`,
+                gameOverTitle: 'Has perdido 😔',
+                noMoreMoves: 'No hay más movimientos válidos.',
+                resume: 'Continuar',
+                howToPlay: 'Cómo Jugar',
+                restart: 'Reintentar',
+                newGame: 'Nueva Partida',
+                reviewBoard: 'Revisar Tablero',
+                loadingTiles: 'Cargando Fichas...',
+                loadingContent: 'Por favor, espera mientras preparamos el juego.'
+            }
+        };
+        
+        // --- Layouts ---
+        const layout = [
+            [
+                'oooo',
+                'oooo',
+                'oooo',
+                'oooo'
+            ],
+            [
+                'oo',
+                'oo'
+            ]
+        ];
+
+        const colors = {
+            background: '#f0f0f0',
+            stroke: '#000',
+            side: '#cccccc',
+            selected: '#d9f7a7',
+            text: '#000',
+            blocked: '#b8b8b8'
+        };
+        
+        // Global ui state
+        const ui = {
+            colors: colors, // Reference the new constants
+            tileImages: {}, // Object to store loaded tile images
+            currentLanguage: 'en', // NEW: Stores the user's language
+            localizedStrings: locales['en'] // NEW: Reference to the current language strings
+        }
+
+        // Function to get the correct localization object
+        const getLocalizedStrings = () => {
+            const browserLang = navigator.language.split('-')[0];
+            if (locales[browserLang]) {
+                ui.currentLanguage = browserLang;
+            } else {
+                ui.currentLanguage = 'en'; // Default to English
+            }
+            ui.localizedStrings = locales[ui.currentLanguage];
+        };
+
+        const startGame = (seed) => {
+            window.mahjongLogic.startGameLogic(game, layout, seed);
+            draw();
+        };
+
+        const saveGameState = () => window.mahjongLogic.saveGameStateLogic(game);
+        
+        const loadGameState = () => {
+            window.mahjongLogic.loadGameStateLogic(game, layout, startGame, showDialog, draw, startTimer);
+        }
+
+        const checkWinLoseCondition = () => {
+            window.mahjongLogic.checkWinLoseConditionLogic(game, showWinLoseDialog, isFree);
+        }
+        
+        const isFree = (tile) => {
+            return window.mahjongLogic.isFreeLogic(tile, game.tiles, layout);
+        }
+
+        // Preload all tile images.
+        const preloadImages = () => {
+            // Display a loading message
+            showDialog(ui.localizedStrings.loadingTiles, ui.localizedStrings.loadingContent, []);
+
+            const promises = tileTypes.map(tileType => {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        ui.tileImages[tileType] = img;
+                        resolve();
+                    };
+                    img.onerror = () => {
+                        console.log(`Failed to load image for tile: ${tileType}.png. Falling back to text.`);
+                        // The image won't be stored in ui.tileImages, which is our fallback condition.
+                        resolve();
+                    };
+                    img.src = `tiles/${tileType}.png`;
+                });
+            });
+
+            return Promise.all(promises);
+        };
+
+        // Initializes the game.
+        const initGame = async () => {
+            // First, get the language.
+            getLocalizedStrings();
+            
+            game.canvas = document.getElementById('game-canvas');
+            game.ctx = game.canvas.getContext('2d');
+            game.messageBox = document.getElementById('message-box');
+            game.dialogTitle = document.getElementById('dialog-title');
+            game.dialogContent = document.getElementById('dialog-content');
+            game.dialogButtons = document.getElementById('dialog-buttons');
+            game.timerDisplay = document.getElementById('timer-display');
+            game.pairsDisplay = document.getElementById('pairs-remaining-display');
+
+            game.canvas.addEventListener('mousedown', handleClick);
+            game.canvas.addEventListener('touchstart', handleTouch);
+            window.addEventListener('resize', resizeCanvas);
+            window.addEventListener('beforeunload', saveGameState);
+            document.getElementById('top-bar').addEventListener('click', showGameMenu);
+            
+            // Wait for images to load before continuing
+            await preloadImages();
+
+            // The key change is calling resizeCanvas immediately. This ensures the canvas
+            // internal drawing dimensions are correct from the start.
+            resizeCanvas();
+
+            // Start the game immediately or resume from saved state
+            loadGameState();
+        };
+        
+        // Make updatePairsDisplay globally accessible to be called from the logic script
+        const updatePairsDisplay = () => {
+            game.pairsDisplay.textContent = `${ui.localizedStrings.pairsText} ${game.pairsRemaining}`;
+        };
+        window.updatePairsDisplay = updatePairsDisplay; // Expose to global scope
+
+        const draw = () => {
+            game.ctx.clearRect(0, 0, game.canvas.width, game.canvas.height);
+            if (game.tiles.length === 0) return;
+
+            const scaledTileSize = {
+                width: game.tileSize.width * game.scale,
+                height: game.tileSize.height * game.scale,
+                depth: game.tileSize.depth * game.scale,
+            };
+
+            const baseLayer = layout[0];
+            const baseLayerWidth = baseLayer[0].length;
+            const baseLayerHeight = baseLayer.length;
+            const boardWidth = (baseLayerWidth * game.tileSize.width) * game.scale;
+            const boardHeight = (baseLayerHeight * game.tileSize.height) * game.scale;
+
+            const globalOffsetX = (game.canvas.width - boardWidth) / 2;
+            const globalOffsetY = (game.canvas.height - boardHeight) / 2;
+
+            const sortedTiles = [...game.tiles].sort((a, b) => a.z - b.z);
+
+            sortedTiles.forEach(tile => {
+                const layer = layout[tile.z];
+                const layerWidth = layer[0].length;
+                const layerHeight = layer.length;
+
+                const layerOffsetX = (baseLayerWidth - layerWidth) / 2 * scaledTileSize.width;
+                const layerOffsetY = (baseLayerHeight - layerHeight) / 2 * scaledTileSize.height;
+
+                const x = (tile.x * scaledTileSize.width) - (tile.z * scaledTileSize.depth) + layerOffsetX + globalOffsetX;
+                const y = (tile.y * scaledTileSize.height) - (tile.z * scaledTileSize.depth) + layerOffsetY + globalOffsetY;
+
+                drawTile(x, y, scaledTileSize, tile.value, tile.id === (game.selectedTile ? game.selectedTile.id : null), isFree(tile));
+            });
+        };
+
+        const drawTile = (x, y, size, value, isSelected, isFreeTile) => {
+            game.ctx.save();
+            game.ctx.translate(x, y);
+
+            // Draw selection highlight for the free tile if needed
+            if (isSelected) {
+                game.ctx.fillStyle = ui.colors.selected;
+                const padding = 4;
+                roundRect(game.ctx, -padding, -padding, size.width + 2 * padding, size.height + 2 * padding, 8);
+                game.ctx.fill();
+            }
+
+            // Determine main tile body color
+            let fillStyle;
+            if (isSelected) {
+                fillStyle = ui.colors.selected;
+            } else if (!isFreeTile && game.showBlockedHighlight) {
+                fillStyle = ui.colors.blocked;
+            } else {
+                fillStyle = ui.colors.background;
+            }
+
+            // Draw the main tile body
+            game.ctx.fillStyle = fillStyle;
+            game.ctx.strokeStyle = ui.colors.stroke;
+            game.ctx.lineWidth = 2;
+            roundRect(game.ctx, 0, 0, size.width, size.height, 8);
+            game.ctx.fill();
+            game.ctx.stroke();
+
+            // Draw tile sides
+            game.ctx.fillStyle = ui.colors.side;
+            game.ctx.beginPath();
+            game.ctx.moveTo(size.width, 0);
+            game.ctx.lineTo(size.width + size.depth, size.depth);
+            game.ctx.lineTo(size.width + size.depth, size.height + size.depth);
+            game.ctx.lineTo(size.width, size.height);
+            game.ctx.closePath();
+            game.ctx.fill();
+
+            game.ctx.beginPath();
+            game.ctx.moveTo(0, size.height);
+            game.ctx.lineTo(size.depth, size.height + size.depth);
+            game.ctx.lineTo(size.width + size.depth, size.height + size.depth);
+            game.ctx.lineTo(size.width, size.height);
+            game.ctx.closePath();
+            game.ctx.fill();
+
+            // Draw image or text
+            const img = ui.tileImages[value];
+            if (img) {
+                // Draw the image centered on the tile
+                const imgScale = Math.min(size.width / img.width, size.height / img.height) * 0.9;
+                const imgWidth = img.width * imgScale;
+                const imgHeight = img.height * imgScale;
+                const imgX = (size.width - imgWidth) / 2;
+                const imgY = (size.height - imgHeight) / 2;
+                game.ctx.drawImage(img, imgX, imgY, imgWidth, imgHeight);
+            } else {
+                // Fallback to drawing text
+                game.ctx.fillStyle = ui.colors.text;
+                game.ctx.font = `${size.height * 0.7}px Arial`;
+                game.ctx.textAlign = 'center';
+                game.ctx.textBaseline = 'middle';
+                game.ctx.fillText(value || '', size.width / 2, size.height / 2);
+            }
+            
+            game.ctx.restore();
+        };
+
+        const roundRect = (ctx, x, y, width, height, radius) => {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        };
+
+        const resizeCanvas = () => {
+            const container = game.canvas.parentElement;
+            const availableWidth = container.clientWidth;
+            const availableHeight = container.clientHeight;
+
+            const baseLayer = layout[0];
+            const baseLayerWidth = baseLayer[0].length;
+            const baseLayerHeight = baseLayer.length;
+            const maxZ = layout.length - 1;
+
+            const boardIdealWidth = baseLayerWidth * game.tileSize.width + maxZ * game.tileSize.depth;
+            const boardIdealHeight = baseLayerHeight * game.tileSize.height + maxZ * game.tileSize.depth;
+            const boardAspectRatio = boardIdealWidth / boardIdealHeight;
+
+            let finalWidth, finalHeight;
+
+            if (availableWidth / availableHeight > boardAspectRatio) {
+                finalHeight = availableHeight;
+                finalWidth = finalHeight * boardAspectRatio;
+            } else {
+                finalWidth = availableWidth;
+                finalHeight = finalWidth / boardAspectRatio;
+            }
+
+            // Set both the style dimensions and the canvas's internal drawing dimensions
+            game.canvas.style.width = `${finalWidth}px`;
+            game.canvas.style.height = `${finalHeight}px`;
+
+            game.canvas.width = finalWidth;
+            game.canvas.height = finalHeight;
+
+            game.scale = finalWidth / boardIdealWidth;
+            draw();
+        };
+
+        const handleClick = (event) => {
+            // FIX: If the game is not active, a click on the board should re-open the dialog.
+            if (!game.isGameActive) {
+                showWinLoseDialog(false, "noMoreMoves");
+                return;
+            }
+            handleInput(event.clientX, event.clientY);
+        };
+
+        const handleTouch = (event) => {
+            if (!game.isGameActive) return;
+            event.preventDefault();
+            const touch = event.touches[0];
+            handleInput(touch.clientX, touch.clientY);
+        };
+
+        const handleInput = (clientX, clientY) => {
+            const rect = game.canvas.getBoundingClientRect();
+            const inputX = clientX - rect.left;
+            const inputY = clientY - rect.top;
+
+            const scaledTileSize = {
+                width: game.tileSize.width * game.scale,
+                height: game.tileSize.height * game.scale,
+                depth: game.tileSize.depth * game.scale,
+            };
+
+            const baseLayer = layout[0];
+            const baseLayerWidth = baseLayer[0].length;
+            const baseLayerHeight = baseLayer.length;
+            const boardWidth = (baseLayerWidth * game.tileSize.width) * game.scale;
+            const boardHeight = (baseLayerHeight * game.tileSize.height) * game.scale;
+
+            const globalOffsetX = (game.canvas.width - boardWidth) / 2;
+            const globalOffsetY = (game.canvas.height - boardHeight) / 2;
+
+            let clickedTile = null;
+            const sortedTiles = [...game.tiles].sort((a, b) => b.z - a.z);
+
+            for (const tile of sortedTiles) {
+                const layer = layout[tile.z];
+                const layerWidth = layer[0].length;
+                const layerHeight = layer.length;
+
+                const layerOffsetX = (baseLayerWidth - layerWidth) / 2 * scaledTileSize.width;
+                const layerOffsetY = (baseLayerHeight - layerHeight) / 2 * scaledTileSize.height;
+
+                const tileX = (tile.x * scaledTileSize.width) - (tile.z * scaledTileSize.depth) + layerOffsetX + globalOffsetX;
+                const tileY = (tile.y * scaledTileSize.height) - (tile.z * scaledTileSize.depth) + layerOffsetY + globalOffsetY;
+
+                if (inputX >= tileX && inputX <= tileX + scaledTileSize.width + scaledTileSize.depth &&
+                    inputY >= tileY && inputY <= tileY + scaledTileSize.height + scaledTileSize.depth) {
+                    clickedTile = tile;
+                    break;
+                }
+            }
+
+            if (clickedTile) {
+                if (!game.isTimerRunning) {
+                    startTimer();
+                }
+                // Check if the tile is free or blocked
+                if (isFree(clickedTile)) {
+                    // Reset blocked tile highlight when a free tile is clicked
+                    game.showBlockedHighlight = false;
+
+                    if (!game.selectedTile) {
+                        game.selectedTile = clickedTile;
+                    } else if (game.selectedTile.id === clickedTile.id) {
+                        game.selectedTile = null;
+                    } else if (game.selectedTile.value === clickedTile.value) {
+                        game.tiles = game.tiles.filter(t => t.id !== game.selectedTile.id && t.id !== clickedTile.id);
+                        game.pairsRemaining--;
+                        updatePairsDisplay();
+                        game.selectedTile = null;
+                        saveGameState();
+                        checkWinLoseCondition();
+                    } else {
+                        game.selectedTile = clickedTile;
+                    }
+                } else {
+                    // Show the blocked tile highlight
+                    game.showBlockedHighlight = true;
+                    game.selectedTile = null;
+                }
+                draw();
+            }
+        };
+
+        const startTimer = () => {
+            if (!game.isTimerRunning) {
+                game.isTimerRunning = true;
+                game.timerInterval = setInterval(() => {
+                    game.timeElapsed++;
+                    updateTimerDisplay();
+                }, 1000);
+            }
+        };
+
+        const updateTimerDisplay = () => {
+            const minutes = Math.floor(game.timeElapsed / 60).toString().padStart(2, '0');
+            const secs = (game.timeElapsed % 60).toString().padStart(2, '0');
+            game.timerDisplay.textContent = `${minutes}:${secs}`;
+        };
+
+        const showGameMenu = () => {
+            game.isGameActive = false;
+            clearInterval(game.timerInterval);
+            saveGameState();
+            const buttons = [
+                { text: ui.localizedStrings.resume, action: resumeGame, color: "green" },
+                { text: ui.localizedStrings.howToPlay, action: showInstructions, color: "gray" },
+                { text: ui.localizedStrings.restart, action: restartGame, color: "yellow" },
+                { text: ui.localizedStrings.newGame, action: newGame, color: "blue" }
+            ];
+            showDialog(ui.localizedStrings.gamePausedTitle, "", buttons);
+        };
+
+        const newGame = () => {
+            startGame();
+            updateTimerDisplay();
+        };
+
+        const restartGame = () => {
+            startGame(game.seed);
+            updateTimerDisplay();
+        };
+
+        const resumeGame = () => {
+            game.isGameActive = true;
+            game.messageBox.classList.add('hidden-dialog');
+            startTimer();
+            draw();
+        };
+
+        const showInstructions = () => {
+            const buttons = [
+                { text: ui.localizedStrings.resume, action: resumeGame, color: "green" }
+            ];
+            showDialog(ui.localizedStrings.howToPlayTitle, ui.localizedStrings.howToPlayContent, buttons);
+        };
+
+        // handles the "Review Board" action.
+        const reviewBoard = () => {
+            game.messageBox.classList.add('hidden-dialog');
+            game.isGameActive = false; // Game should remain inactive
+            game.showBlockedHighlight = true;
+            draw();
+        };
+
+        // Show dialog for Win / Loss
+        const showWinLoseDialog = (isWin, reasonString = null) => {
+            game.isGameActive = false;
+            let title = isWin ? ui.localizedStrings.winTitle : ui.localizedStrings.gameOverTitle;
+            let content = "";
+            let buttons = [];
+            let effectFunction = (cb) => cb();
+            reasonString = ui.localizedStrings[reasonString] || reasonString;
+
+            // display win or lose message
+            if (isWin) {
+                const minutes = Math.floor(game.timeElapsed / 60).toString().padStart(2, '0');
+                const secs = (game.timeElapsed % 60).toString().padStart(2, '0');
+                content = ui.localizedStrings.winContent(game.initialPairs, `${minutes}:${secs}`);
+                if (window.showWinEffect) {
+                  effectFunction = window.showWinEffect;
+                }
+            } else {
+                content = reasonString;
+                buttons.push({ text: ui.localizedStrings.reviewBoard, action: reviewBoard, color: "gray" });
+                if (window.showGameOverEffect) {
+                  effectFunction = window.showGameOverEffect;
+                }
+            }
+
+            buttons.push({ text: ui.localizedStrings.restart, action: restartGame, color: "yellow" });
+            buttons.push({ text: ui.localizedStrings.newGame, action: newGame, color: "blue" });
+
+            effectFunction(() => showDialog(title, content, buttons));
+            localStorage.removeItem('mahjongGameState');
+        };
+
+        const showDialog = (title, content, buttons) => {
+
+            title = ui.localizedStrings[title] || title;
+            content = ui.localizedStrings[content] || content;
+
+            game.dialogTitle.textContent = title;
+            game.dialogContent.textContent = content;
+
+            game.dialogButtons.innerHTML = '';
+            buttons.forEach(buttonData => {
+                const button = document.createElement('button');
+                button.textContent = ui.localizedStrings[buttonData.text] || buttonData.text;
+                button.onclick = buttonData.action;
+                button.className = `px-6 py-3 rounded-full text-white font-bold transition-colors duration-300 shadow-lg`;
+                switch (buttonData.color) {
+                    case 'green':
+                        button.classList.add('bg-green-500', 'hover:bg-green-600');
+                        break;
+                    case 'yellow':
+                        button.classList.add('bg-yellow-500', 'hover:bg-yellow-600');
+                        break;
+                    case 'blue':
+                        button.classList.add('bg-blue-500', 'hover:bg-blue-600');
+                        break;
+                    case 'gray':
+                        button.classList.add('bg-gray-500', 'hover:bg-gray-600');
+                        break;
+                }
+                game.dialogButtons.appendChild(button);
+            });
+            game.dialogButtons.style.display = buttons.length > 0 ? 'flex' : 'none';
+            game.messageBox.classList.remove('hidden-dialog');
+        };
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>

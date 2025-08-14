@@ -1,0 +1,17 @@
+{
+    "name": "Kyodai Mahjong",
+    "short_name": "Kyodai",
+    "start_url": ".",
+    "display": "fullscreen",
+	"prefer_related_applications": false,
+    "background_color": "#2c3e50",
+    "theme_color": "#2c3e50",
+    "icons": [
+        {
+            "src": "icon.png",
+            "type": "image/png",
+            "sizes": "256x256",
+            "purpose": "any maskable"
+        }
+    ]
+}
