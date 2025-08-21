@@ -97,7 +97,8 @@
                 share: 'Share',
                 shareMessage: 'Can you solve this Mahjong board?',
                 loadingTiles: 'Loading Tiles...',
-                loadingContent: 'Please wait while we prepare the game.'
+                loadingContent: 'Please wait while we prepare the game.',
+                score: 'Score',
             },
             'es': {
                 pairsText: 'Pares:',
@@ -118,7 +119,8 @@
                 share: 'Compartir',
                 shareMessage: '¿Eres capaz de resolver este Mahjong?',
                 loadingTiles: 'Cargando Fichas...',
-                loadingContent: 'Por favor, espera mientras preparamos el juego.'
+                loadingContent: 'Por favor, espera mientras preparamos el juego.',
+                score: 'Puntuación',
             }
         };
 
@@ -404,10 +406,9 @@
         };
 
         const handleClick = (event) => {
-            // FIX: If the game is not active, a click on the board should re-open the dialog.
+            // If the game is not active, a click on the board should re-check the Win/Lose condition.
             if (!game.isGameActive) {
-                showWinLoseDialog(false, "noMoreMoves");
-                return;
+                return checkWinLoseCondition();
             }
             handleInput(event.clientX, event.clientY);
         };
@@ -459,7 +460,7 @@
                     break;
                 }
             }
-
+			
             if (clickedTile) {
                 if (!game.isTimerRunning) {
                     startTimer();
@@ -474,8 +475,17 @@
                     } else if (game.selectedTile.id === clickedTile.id) {
                         game.selectedTile = null;
                     } else if (game.selectedTile.value === clickedTile.value) {
+                        const time = new Date();
+						const elapsed = (time - game.lastPairTime)/1000;
+                        const bonus = Math.min(30, 60 / Math.ceil(elapsed));
+						if (bonus > 10) {
+						  showSparkleEffect(`${clientX}px`, `${clientY}px`);
+                          console.log(`${elapsed.toFixed(1)}s pair! Bonus score: ${bonus}`);
+						}
+                        game.extraScore += bonus;
                         game.tiles = game.tiles.filter(t => t.id !== game.selectedTile.id && t.id !== clickedTile.id);
                         game.pairsRemaining--;
+                        game.lastPairTime = new Date(); 
                         updatePairsDisplay();
                         game.selectedTile = null;
                         saveGameState();
@@ -555,7 +565,7 @@
 
         const shareURI = () => {
             const shareData = {
-                title: 'Mahjong Solitaire',
+                title: 'Kyodai Mahjong',
                 text: ui.localizedStrings.shareMessage,
                 url: window.location.href
             };
@@ -578,6 +588,7 @@
                 const minutes = Math.floor(game.timeElapsed / 60).toString().padStart(2, '0');
                 const secs = (game.timeElapsed % 60).toString().padStart(2, '0');
                 content = ui.localizedStrings.winContent(game.initialPairs, `${minutes}:${secs}`);
+                content = `<b>${ui.localizedStrings.score}: ${getScore()}</b><p>${content}</p>`;
                 if (window.showWinEffect) {
                   effectFunction = window.showWinEffect;
                 }
@@ -607,7 +618,7 @@
             content = ui.localizedStrings[content] || content;
 
             game.dialogTitle.textContent = title;
-            game.dialogContent.textContent = content;
+            game.dialogContent.innerHTML = content;
 
             game.dialogButtons.innerHTML = '';
             buttons.forEach(buttonData => {

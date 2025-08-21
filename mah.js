@@ -28,6 +28,8 @@ const game = {
 	initialPairs: 0,
 	pairsDisplay: null,
 	showBlockedHighlight: false,
+	lastPairTime: null,
+	extraScore: 0,
 };
 
 
@@ -129,6 +131,7 @@ const startGameLogic = (game, pyramidLayout, seed = Math.floor(Math.random() * 1
 	
 	game.initialPairs = totalTiles / 2;
 	game.pairsRemaining = game.initialPairs;
+	game.extraScore = 0;
 	game.showBlockedHighlight = false; // Reset the blocked tile highlight state
 	
 	// Update the pairs display immediately after starting a new game
@@ -210,6 +213,10 @@ const checkWinLoseConditionLogic = (game, showWinLoseDialogCallback, isFreeCallb
 		game.isGameActive = false;
 	}
 };
+
+const getScore = () => {
+	return ((game.extraScore + 10 * (game.initialPairs - game.pairsRemaining)) / game.timeElapsed).toFixed(1);
+}
 
 // Checks if a tile is "free".
 const isFreeLogic = (tile, allTiles, pyramidLayout) => {
