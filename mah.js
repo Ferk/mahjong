@@ -213,10 +213,11 @@ const isFreeLogic = (tile, allTiles, pyramidLayout) => {
 		const yOffset = (currentLayer.length - nextLayer.length) / 2;
 
 		const tileOnTop = allTiles.find(t =>
-			t.z === nextLayerIndex &&
-			t.x === tile.x - xOffset &&
-			t.y === tile.y - yOffset
+			t.z === nextLayerIndex
+			&& (t.x === Math.floor(tile.x - xOffset) || t.x === Math.ceil(tile.x - xOffset))
+			&& (t.y === Math.floor(tile.y - yOffset) || t.y == Math.ceil(tile.y - yOffset))
 		);
+
 		if (tileOnTop) return false;
 	}
 
