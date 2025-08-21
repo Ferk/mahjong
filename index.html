@@ -28,7 +28,7 @@
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
             display: block;
         }
-        
+
         /* New custom class for message box visibility */
         .hidden-dialog {
             opacity: 0;
@@ -75,7 +75,7 @@
               });
           });
         }
-        
+
         // --- Localization Object ---
         const locales = {
             'en': {
@@ -94,6 +94,8 @@
                 restart: 'Retry',
                 newGame: 'New Game',
                 reviewBoard: 'Review Board',
+                share: 'Share',
+                shareMessage: 'Can you solve this Mahjong board?',
                 loadingTiles: 'Loading Tiles...',
                 loadingContent: 'Please wait while we prepare the game.'
             },
@@ -113,11 +115,13 @@
                 restart: 'Reintentar',
                 newGame: 'Nueva Partida',
                 reviewBoard: 'Revisar Tablero',
+                share: 'Compartir',
+                shareMessage: '¿Eres capaz de resolver este Mahjong?',
                 loadingTiles: 'Cargando Fichas...',
                 loadingContent: 'Por favor, espera mientras preparamos el juego.'
             }
         };
-        
+
         // --- Layouts ---
         const layout = [
             [
@@ -144,7 +148,7 @@
             text: '#000',
             blocked: '#b8b8b8'
         };
-        
+
         // Global ui state
         const ui = {
             colors: colors, // Reference the new constants
@@ -170,7 +174,7 @@
         };
 
         const saveGameState = () => window.mahjongLogic.saveGameStateLogic(game);
-        
+
         const loadGameState = () => {
             window.mahjongLogic.loadGameStateLogic(game, layout, startGame, showDialog, draw, startTimer);
         }
@@ -178,7 +182,7 @@
         const checkWinLoseCondition = () => {
             window.mahjongLogic.checkWinLoseConditionLogic(game, showWinLoseDialog, isFree);
         }
-        
+
         const isFree = (tile) => {
             return window.mahjongLogic.isFreeLogic(tile, game.tiles, layout);
         }
@@ -211,7 +215,7 @@
         const initGame = async () => {
             // First, get the language.
             getLocalizedStrings();
-            
+
             game.canvas = document.getElementById('game-canvas');
             game.ctx = game.canvas.getContext('2d');
             game.messageBox = document.getElementById('message-box');
@@ -226,7 +230,7 @@
             window.addEventListener('resize', resizeCanvas);
             window.addEventListener('beforeunload', saveGameState);
             document.getElementById('top-bar').addEventListener('click', showGameMenu);
-            
+
             // Wait for images to load before continuing
             await preloadImages();
 
@@ -237,7 +241,7 @@
             // Start the game immediately or resume from saved state
             loadGameState();
         };
-        
+
         // Make updatePairsDisplay globally accessible to be called from the logic script
         const updatePairsDisplay = () => {
             game.pairsDisplay.textContent = `${ui.localizedStrings.pairsText} ${game.pairsRemaining}`;
@@ -346,7 +350,7 @@
                 game.ctx.textBaseline = 'middle';
                 game.ctx.fillText(value || '', size.width / 2, size.height / 2);
             }
-            
+
             game.ctx.restore();
         };
 
@@ -549,6 +553,17 @@
             draw();
         };
 
+        const shareURI = () => {
+            const shareData = {
+                title: 'Mahjong Solitaire',
+                text: ui.localizedStrings.shareMessage,
+                url: window.location.href
+            };
+            navigator.share(shareData)
+                .then(() => console.log('Successfully shared'))
+                .catch((error) => console.log('Error sharing', error));
+        };
+
         // Show dialog for Win / Loss
         const showWinLoseDialog = (isWin, reasonString = null) => {
             game.isGameActive = false;
@@ -572,6 +587,11 @@
                 if (window.showGameOverEffect) {
                   effectFunction = window.showGameOverEffect;
                 }
+            }
+
+            // If "Share" feature is enabled on the browser, show a share button
+            if (navigator.share) {
+              buttons.push({ text: ui.localizedStrings.share, action: shareURI, color: "green" });
             }
 
             buttons.push({ text: ui.localizedStrings.restart, action: restartGame, color: "yellow" });

@@ -70,7 +70,11 @@ const startGameLogic = (game, pyramidLayout, seed = Math.floor(Math.random() * 1
 
 	if (game.messageBox) game.messageBox.classList.add('hidden-dialog');
 
+	// Update URI parameters to make it shareable
+	window.history.pushState({}, '', `?s=${seed}`);
+
 	game.seed = seed;
+	
 	const rng = createSeededRandom(game.seed);
 
 	let totalTiles = 0;
@@ -144,11 +148,16 @@ const saveGameStateLogic = (game) => {
 	localStorage.setItem('mahjongGameState', JSON.stringify(gameState));
 };
 
-// Loads a saved game state from localStorage, or starts a new one if none exists
-const loadGameStateLogic = (game, pyramidLayout, newGameCallback, showDialogCallback, drawCallback, startTimerCallback) => {
+// Loads a saved game state from localStorage, or starts a new one if none exists, taking into account the seed from the parameters, if provided
+const loadGameStateLogic = (game, layout, newGameCallback, showDialogCallback, drawCallback, startTimerCallback) => {
+	
+	// Check for a seed in the URL query parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const seedParam = urlParams.get('s');
+	
 	const savedState = localStorage.getItem('mahjongGameState');
-	// Check if a saved state exists and if the game is not already won or lost
-	if (savedState && game.pairsRemaining > 0) {
+	// Check if a saved state exists, the game is not already won or lost and a new seed was not provided as parameter
+	if (savedState && game.pairsRemaining > 0 && (!seedParam || seedParam == game.seed)) {
 		const gameState = JSON.parse(savedState);
 		game.tiles = gameState.tiles;
 		game.timeElapsed = gameState.timeElapsed;
@@ -167,8 +176,8 @@ const loadGameStateLogic = (game, pyramidLayout, newGameCallback, showDialogCall
 		];
 		showDialogCallback("welcomeBackTitle", "welcomeBackContent", buttons);
 	} else {
-		// If no saved state, start a new game immediately
-		startGameLogic(game, pyramidLayout);
+		// If no valid saved state, start a new game immediately, with the given seed if provided
+		startGameLogic(game, layout, seedParam || undefined);
 	}
 };
 
