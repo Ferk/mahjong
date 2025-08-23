@@ -93,7 +93,7 @@ const startGameLogic = (game, pyramidLayout, seed = Math.floor(Math.random() * 1
 	}
 
 	if (totalTiles % 4 !== 0) {
-		console.error("The pyramid layout must contain a number of tiles that is a multiple of 4.");
+		console.error(`Invalid tile count of ${totalTiles}. The pyramid layout must contain a number of tiles that is a multiple of 4.`);
 		game.isGameActive = false;
 		return;
 	}
