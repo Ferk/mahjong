@@ -290,6 +290,9 @@
             game.ctx.save();
             game.ctx.translate(x, y);
 
+            // Disable image smoothing for crisper images
+            game.ctx.imageSmoothingEnabled = false;
+
             // Draw selection highlight for the free tile if needed
             if (isSelected) {
                 game.ctx.fillStyle = ui.colors.selected;
@@ -398,10 +401,11 @@
             game.canvas.style.width = `${finalWidth}px`;
             game.canvas.style.height = `${finalHeight}px`;
 
-            game.canvas.width = finalWidth;
-            game.canvas.height = finalHeight;
+            // draw the canvas bigger in order to show higher resolution images while decoupling CSS scaling logic
+            game.canvas.width = finalWidth*4;
+            game.canvas.height = finalHeight*4;
 
-            game.scale = finalWidth / boardIdealWidth;
+            game.scale = finalWidth*4 / boardIdealWidth;
             draw();
         };
 
@@ -422,8 +426,12 @@
 
         const handleInput = (clientX, clientY) => {
             const rect = game.canvas.getBoundingClientRect();
-            const inputX = clientX - rect.left;
-            const inputY = clientY - rect.top;
+
+            // 1. Scale input coordinates from CSS/display size to internal drawing size
+            const scaleX = game.canvas.width / rect.width;
+            const scaleY = game.canvas.height / rect.height;
+            const inputX = (clientX - rect.left) * scaleX;
+            const inputY = (clientY - rect.top) * scaleY;
 
             const scaledTileSize = {
                 width: game.tileSize.width * game.scale,
@@ -460,7 +468,7 @@
                     break;
                 }
             }
-			
+
             if (clickedTile) {
                 if (!game.isTimerRunning) {
                     startTimer();
