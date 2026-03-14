@@ -182,7 +182,18 @@
         const saveGameState = () => window.mahjongLogic.saveGameStateLogic(game);
 
         const loadGameState = () => {
-            window.mahjongLogic.loadGameStateLogic(game, layout, startGame, showDialog, draw, startTimer);
+            window.mahjongLogic.loadGameStateLogic(
+                game,
+                layout,
+                startGame,
+                showDialog,
+                draw,
+                startTimer,
+                () => {
+                    updatePairsDisplay();
+                    updateTimerDisplay();
+                }
+            );
         }
 
         const checkWinLoseCondition = () => {
@@ -533,6 +544,7 @@
         const showGameMenu = () => {
             game.isGameActive = false;
             clearInterval(game.timerInterval);
+            game.isTimerRunning = false;
             saveGameState();
             const buttons = [
                 { text: ui.localizedStrings.resume, action: resumeGame, color: "green" },
@@ -621,7 +633,7 @@
             buttons.push({ text: ui.localizedStrings.newGame, action: newGame, color: "blue" });
 
             effectFunction(() => showDialog(title, content, buttons));
-            localStorage.removeItem('mahjongGameState');
+            window.mahjongLogic.clearSavedGameStateLogic();
         };
 
         const showDialog = (title, content, buttons) => {

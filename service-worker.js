@@ -1,14 +1,15 @@
-const CACHE_NAME = 'mahjong-solitaire-v3';
+const CACHE_NAME = 'mahjong-solitaire-v4';
 const TILE_IMAGES = [
   'tiles/1m.png', 'tiles/2m.png', 'tiles/3m.png', 'tiles/4m.png', 'tiles/5m.png', 'tiles/6m.png', 'tiles/7m.png', 'tiles/8m.png', 'tiles/9m.png',
   'tiles/1p.png', 'tiles/2p.png', 'tiles/3p.png', 'tiles/4p.png', 'tiles/5p.png', 'tiles/6p.png', 'tiles/7p.png', 'tiles/8p.png', 'tiles/9p.png',
-  'tiles/1s.png', 'tiles/2s.png', 'tiles/3s.png', 'tiles/4s.png', '5s.png', 'tiles/6s.png', 'tiles/7s.png', 'tiles/8s.png', 'tiles/9s.png',
-  'tiles/E.png', 'tiles/S.png', 'tiles/W.png', 'tiles/N.png', 'tiles/RD.png', 'tiles/GD.png', 'tiles/WD.png'
+  'tiles/1s.png', 'tiles/2s.png', 'tiles/3s.png', 'tiles/4s.png', 'tiles/5s.png', 'tiles/6s.png', 'tiles/7s.png', 'tiles/8s.png', 'tiles/9s.png',
+  'tiles/E.png', 'tiles/S.png', 'tiles/W.png', 'tiles/N.png', 'tiles/RD.png', 'tiles/GD.png', 'tiles/WD.png', 'tiles/F1.png', 'tiles/F2.png'
 ];
 const urlsToCache = [
   '/',
   'index.html',
   'mah.js',
+  'effects.js',
   'manifest.json',
   'icon.png',
   'service-worker.js',

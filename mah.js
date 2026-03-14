@@ -1,6 +1,5 @@
 // This script contains all the core game logic for Mahjong Solitaire.
 
-
 // Standard Mahjong tiles.
 const tileTypes = ['1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m',
 				'1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p',
@@ -32,6 +31,230 @@ const game = {
 	extraScore: 0,
 };
 
+const layoutAnalysisCache = new WeakMap();
+const seedAlphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+const getPositionKey = ({ x, y, z }) => `${x},${y},${z}`;
+
+const getLayoutPositions = (pyramidLayout) => {
+	const positions = [];
+
+	for (let z = 0; z < pyramidLayout.length; z++) {
+		const layer = pyramidLayout[z];
+		for (let y = 0; y < layer.length; y++) {
+			const row = layer[y];
+			for (let x = 0; x < row.length; x++) {
+				if (row[x] === 'o') {
+					positions.push({ x, y, z });
+				}
+			}
+		}
+	}
+
+	return positions;
+};
+
+const countTilesInLayout = (pyramidLayout) => getLayoutPositions(pyramidLayout).length;
+
+const createLayoutAnalysis = (pyramidLayout) => {
+	if (layoutAnalysisCache.has(pyramidLayout)) {
+		return layoutAnalysisCache.get(pyramidLayout);
+	}
+
+	const positions = getLayoutPositions(pyramidLayout);
+	const indexByKey = new Map(
+		positions.map((position, index) => [getPositionKey(position), index])
+	);
+	const leftNeighbors = Array(positions.length).fill(-1);
+	const rightNeighbors = Array(positions.length).fill(-1);
+	const tilesAboveMasks = Array(positions.length).fill(0n);
+
+	for (let index = 0; index < positions.length; index++) {
+		const position = positions[index];
+		const leftNeighbor = indexByKey.get(`${position.x - 1},${position.y},${position.z}`);
+		const rightNeighbor = indexByKey.get(`${position.x + 1},${position.y},${position.z}`);
+
+		if (leftNeighbor !== undefined) {
+			leftNeighbors[index] = leftNeighbor;
+		}
+
+		if (rightNeighbor !== undefined) {
+			rightNeighbors[index] = rightNeighbor;
+		}
+
+		const nextLayerIndex = position.z + 1;
+		if (nextLayerIndex >= pyramidLayout.length) {
+			continue;
+		}
+
+		const currentLayer = pyramidLayout[position.z];
+		const nextLayer = pyramidLayout[nextLayerIndex];
+		const xOffset = (currentLayer[0].length - nextLayer[0].length) / 2;
+		const yOffset = (currentLayer.length - nextLayer.length) / 2;
+
+		for (let candidateIndex = 0; candidateIndex < positions.length; candidateIndex++) {
+			const candidate = positions[candidateIndex];
+			if (
+				candidate.z === nextLayerIndex &&
+				(candidate.x === Math.floor(position.x - xOffset) || candidate.x === Math.ceil(position.x - xOffset)) &&
+				(candidate.y === Math.floor(position.y - yOffset) || candidate.y === Math.ceil(position.y - yOffset))
+			) {
+				tilesAboveMasks[index] |= (1n << BigInt(candidateIndex));
+			}
+		}
+	}
+
+	const analysis = {
+		positions,
+		indexByKey,
+		leftNeighbors,
+		rightNeighbors,
+		tilesAboveMasks,
+		fullMask: (1n << BigInt(positions.length)) - 1n,
+	};
+
+	layoutAnalysisCache.set(pyramidLayout, analysis);
+	return analysis;
+};
+
+const buildOccupancyMask = (tiles, analysis) => {
+	let occupancyMask = 0n;
+
+	for (const tile of tiles) {
+		const positionIndex = analysis.indexByKey.get(getPositionKey(tile));
+		if (positionIndex !== undefined) {
+			occupancyMask |= (1n << BigInt(positionIndex));
+		}
+	}
+
+	return occupancyMask;
+};
+
+const isPositionFreeInMask = (positionIndex, occupancyMask, analysis) => {
+	if ((occupancyMask & analysis.tilesAboveMasks[positionIndex]) !== 0n) {
+		return false;
+	}
+
+	const leftNeighbor = analysis.leftNeighbors[positionIndex];
+	const rightNeighbor = analysis.rightNeighbors[positionIndex];
+	const hasTileToLeft = leftNeighbor !== -1 && (occupancyMask & (1n << BigInt(leftNeighbor))) !== 0n;
+	const hasTileToRight = rightNeighbor !== -1 && (occupancyMask & (1n << BigInt(rightNeighbor))) !== 0n;
+
+	return !hasTileToLeft || !hasTileToRight;
+};
+
+const getFreePositionIndices = (occupancyMask, analysis) => {
+	const freePositions = [];
+
+	for (let positionIndex = 0; positionIndex < analysis.positions.length; positionIndex++) {
+		const tileBit = 1n << BigInt(positionIndex);
+		if ((occupancyMask & tileBit) !== 0n && isPositionFreeInMask(positionIndex, occupancyMask, analysis)) {
+			freePositions.push(positionIndex);
+		}
+	}
+
+	return freePositions;
+};
+
+const hashOccupancyMask = (occupancyMask) => {
+	let hash = 0n;
+	let remainingMask = occupancyMask;
+
+	while (remainingMask > 0n) {
+		hash = (hash * 1315423911n + (remainingMask & 0xffffn)) & 0x7fffffffn;
+		remainingMask >>= 16n;
+	}
+
+	return Number(hash);
+};
+
+const createRandomSeed = (length = 6) => {
+	let seed = '';
+
+	for (let index = 0; index < length; index++) {
+		const randomIndex = Math.floor(Math.random() * seedAlphabet.length);
+		seed += seedAlphabet[randomIndex];
+	}
+
+	return seed;
+};
+
+const normalizeSeed = (seed) => {
+	if (seed === undefined || seed === null || seed === '') {
+		return createRandomSeed();
+	}
+
+	return String(seed);
+};
+
+const hashSeed = (seed) => {
+	const normalizedSeed = normalizeSeed(seed);
+	let hash = 2166136261;
+
+	for (let index = 0; index < normalizedSeed.length; index++) {
+		hash ^= normalizedSeed.charCodeAt(index);
+		hash = Math.imul(hash, 16777619);
+	}
+
+	return (hash >>> 0) % 2147483646 + 1;
+};
+
+const getLocalStorage = () => {
+	try {
+		if (typeof globalThis === 'undefined' || !('localStorage' in globalThis)) {
+			return null;
+		}
+
+		return globalThis.localStorage;
+	} catch (error) {
+		console.warn('Persistent storage is unavailable.', error);
+		return null;
+	}
+};
+
+const readSavedGameState = () => {
+	const storage = getLocalStorage();
+	if (!storage) {
+		return null;
+	}
+
+	try {
+		return storage.getItem('mahjongGameState');
+	} catch (error) {
+		console.warn('Could not read saved game state.', error);
+		return null;
+	}
+};
+
+const writeSavedGameState = (gameState) => {
+	const storage = getLocalStorage();
+	if (!storage) {
+		return false;
+	}
+
+	try {
+		storage.setItem('mahjongGameState', JSON.stringify(gameState));
+		return true;
+	} catch (error) {
+		console.warn('Could not save game state.', error);
+		return false;
+	}
+};
+
+const clearSavedGameState = () => {
+	const storage = getLocalStorage();
+	if (!storage) {
+		return false;
+	}
+
+	try {
+		storage.removeItem('mahjongGameState');
+		return true;
+	} catch (error) {
+		console.warn('Could not clear saved game state.', error);
+		return false;
+	}
+};
 
 // A simple seeded pseudo-random number generator (LCG).
 const createSeededRandom = (seed) => {
@@ -60,8 +283,109 @@ const generateUUID = (random) => {
 	});
 };
 
+const findSolvablePairSequence = (pyramidLayout, seed) => {
+	const numericSeed = typeof seed === 'number' ? seed : hashSeed(seed);
+	const analysis = createLayoutAnalysis(pyramidLayout);
+	const failedMasks = new Set();
+
+	const search = (occupancyMask, depth) => {
+		if (occupancyMask === 0n) {
+			return [];
+		}
+
+		const maskKey = occupancyMask.toString();
+		if (failedMasks.has(maskKey)) {
+			return null;
+		}
+
+		const freePositions = getFreePositionIndices(occupancyMask, analysis);
+		if (freePositions.length < 2) {
+			failedMasks.add(maskKey);
+			return null;
+		}
+
+		const removablePairs = [];
+		for (let i = 0; i < freePositions.length; i++) {
+			for (let j = i + 1; j < freePositions.length; j++) {
+				removablePairs.push([freePositions[i], freePositions[j]]);
+			}
+		}
+
+		const pairRandom = createSeededRandom(numericSeed + depth + hashOccupancyMask(occupancyMask));
+		shuffleArray(removablePairs, pairRandom);
+
+		for (const [firstIndex, secondIndex] of removablePairs) {
+			const nextMask =
+				occupancyMask &
+				~(1n << BigInt(firstIndex)) &
+				~(1n << BigInt(secondIndex));
+			const remainingPairs = search(nextMask, depth + 1);
+
+			if (remainingPairs) {
+				return [[firstIndex, secondIndex], ...remainingPairs];
+			}
+		}
+
+		failedMasks.add(maskKey);
+		return null;
+	};
+
+	const removablePairIndices = search(analysis.fullMask, 0);
+	if (!removablePairIndices) {
+		throw new Error('Could not find a solvable removal path for this layout.');
+	}
+
+	return removablePairIndices.map(([firstIndex, secondIndex]) => [
+		analysis.positions[firstIndex],
+		analysis.positions[secondIndex],
+	]);
+};
+
+const createSolvableTileSet = (pyramidLayout, seed) => {
+	const numericSeed = hashSeed(seed);
+	const totalTiles = countTilesInLayout(pyramidLayout);
+
+	if (totalTiles % 4 !== 0) {
+		throw new Error(
+			`Invalid tile count of ${totalTiles}. The pyramid layout must contain a number of tiles that is a multiple of 4.`
+		);
+	}
+
+	const uniqueValueCount = totalTiles / 4;
+	if (uniqueValueCount > tileTypes.length) {
+		throw new Error(
+			`Layout requires ${uniqueValueCount} unique tile values, but only ${tileTypes.length} are available.`
+		);
+	}
+
+	const pairSequence = findSolvablePairSequence(pyramidLayout, seed);
+	const valueRandom = createSeededRandom(numericSeed);
+	const availableTileTypes = [...tileTypes];
+	shuffleArray(availableTileTypes, valueRandom);
+
+	const pairValues = availableTileTypes
+		.slice(0, uniqueValueCount)
+		.flatMap(tileValue => [tileValue, tileValue]);
+	shuffleArray(pairValues, valueRandom);
+
+	const valueByPositionKey = new Map();
+	pairSequence.forEach((pair, pairIndex) => {
+		for (const position of pair) {
+			valueByPositionKey.set(getPositionKey(position), pairValues[pairIndex]);
+		}
+	});
+
+	return {
+		tiles: getLayoutPositions(pyramidLayout).map(position => ({
+			...position,
+			value: valueByPositionKey.get(getPositionKey(position)),
+		})),
+		solutionPairs: pairSequence.map(pair => pair.map(getPositionKey)),
+	};
+};
+
 // Starts a new game and updates the game state object
-const startGameLogic = (game, pyramidLayout, seed = Math.floor(Math.random() * 100000)) => {
+const startGameLogic = (game, pyramidLayout, seed = createRandomSeed()) => {
 	game.isGameActive = true;
 	game.tiles = [];
 	game.selectedTile = null;
@@ -72,71 +396,38 @@ const startGameLogic = (game, pyramidLayout, seed = Math.floor(Math.random() * 1
 
 	if (game.messageBox) game.messageBox.classList.add('hidden-dialog');
 
+	game.seed = normalizeSeed(seed);
+	game.lastPairTime = null;
+
 	// Update URI parameters to make it shareable
-	window.history.pushState({}, '', `?s=${seed}`);
-
-	game.seed = seed;
-	
-	const rng = createSeededRandom(game.seed);
-
-	let totalTiles = 0;
-	for (let z = 0; z < pyramidLayout.length; z++) {
-		const layer = pyramidLayout[z];
-		for (let y = 0; y < layer.length; y++) {
-			const row = layer[y];
-			for (let x = 0; x < row.length; x++) {
-				if (row[x] === 'o') {
-					totalTiles++;
-				}
-			}
-		}
+	if (typeof window !== 'undefined' && window.history && window.history.pushState) {
+		window.history.pushState({}, '', `?s=${encodeURIComponent(game.seed)}`);
 	}
 
-	if (totalTiles % 4 !== 0) {
-		console.error(`Invalid tile count of ${totalTiles}. The pyramid layout must contain a number of tiles that is a multiple of 4.`);
+	let generatedBoard;
+	try {
+		generatedBoard = createSolvableTileSet(pyramidLayout, game.seed);
+	} catch (error) {
+		console.error(error.message);
 		game.isGameActive = false;
 		return;
 	}
 
-	let tileValues = [];
-	let tileTypesShuffled = [...tileTypes];
-	 shuffleArray(tileTypesShuffled, rng);
-	
-	// Correctly populate tileValues array with pairs of tiles
-	// For a 32-tile board (4 pairs of 8 unique tiles)
-	for (let i = 0; i < totalTiles; i++) {
-		tileValues.push(tileTypesShuffled[Math.floor(i / 4)]);
-	}
-	shuffleArray(tileValues, rng);
+	const idRandom = createSeededRandom(hashSeed(game.seed));
+	game.tiles = generatedBoard.tiles.map(tile => ({
+		...tile,
+		id: generateUUID(idRandom),
+		isBlocked: false,
+	}));
 
-	let tileIndex = 0;
-	for (let z = 0; z < pyramidLayout.length; z++) {
-		const layer = pyramidLayout[z];
-		for (let y = 0; y < layer.length; y++) {
-			const row = layer[y];
-			for (let x = 0; x < row.length; x++) {
-				if (row[x] === 'o') {
-					game.tiles.push({
-						x: x,
-						y: y,
-						z: z,
-						value: tileValues[tileIndex++],
-						id: generateUUID(rng),
-						isBlocked: false
-					});
-				}
-			}
-		}
-	}
-	
-	game.initialPairs = totalTiles / 2;
+	game.initialPairs = game.tiles.length / 2;
 	game.pairsRemaining = game.initialPairs;
 	game.extraScore = 0;
-	game.showBlockedHighlight = false; // Reset the blocked tile highlight state
-	
-	// Update the pairs display immediately after starting a new game
-	window.updatePairsDisplay();
-	draw();
+	game.showBlockedHighlight = false;
+
+	if (typeof window !== 'undefined' && typeof window.updatePairsDisplay === 'function') {
+		window.updatePairsDisplay();
+	}
 };
 
 // Saves the current game state to localStorage
@@ -147,41 +438,62 @@ const saveGameStateLogic = (game) => {
 		pairsRemaining: game.pairsRemaining,
 		initialPairs: game.initialPairs,
 		seed: game.seed,
+		extraScore: game.extraScore,
+		lastPairTime: game.lastPairTime ? game.lastPairTime.toISOString() : null,
 	};
-	localStorage.setItem('mahjongGameState', JSON.stringify(gameState));
+	writeSavedGameState(gameState);
 };
 
-// Loads a saved game state from localStorage, or starts a new one if none exists, taking into account the seed from the parameters, if provided
-const loadGameStateLogic = (game, layout, newGameCallback, showDialogCallback, drawCallback, startTimerCallback) => {
-	
-	// Check for a seed in the URL query parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    const seedParam = urlParams.get('s');
-	
-	const savedState = localStorage.getItem('mahjongGameState');
-	// Check if a saved state exists, the game is not already won or lost and a new seed was not provided as parameter
-	if (savedState && game.pairsRemaining > 0 && (!seedParam || seedParam == game.seed)) {
-		const gameState = JSON.parse(savedState);
-		game.tiles = gameState.tiles;
-		game.timeElapsed = gameState.timeElapsed;
-		game.pairsRemaining = gameState.pairsRemaining;
-		game.initialPairs = gameState.initialPairs;
-		game.seed = gameState.seed;
-		
-		const buttons = [
-			{ text: "resume", action: () => {
-				game.isGameActive = true;
-				if (game.messageBox) game.messageBox.classList.add('hidden-dialog');
-				startTimerCallback();
+// Loads a saved game state from localStorage, or starts a new one if none exists.
+const loadGameStateLogic = (
+	game,
+	layout,
+	newGameCallback,
+	showDialogCallback,
+	drawCallback,
+	startTimerCallback,
+	refreshUiCallback = () => {}
+) => {
+	const urlParams = new URLSearchParams(window.location.search);
+	const seedParam = urlParams.get('s');
+	const savedState = readSavedGameState();
+
+	if (savedState) {
+		try {
+			const gameState = JSON.parse(savedState);
+			const sameSeed = !seedParam || String(gameState.seed) === seedParam;
+
+			if (gameState.pairsRemaining > 0 && sameSeed) {
+				game.tiles = gameState.tiles;
+				game.timeElapsed = gameState.timeElapsed;
+				game.pairsRemaining = gameState.pairsRemaining;
+				game.initialPairs = gameState.initialPairs;
+				game.seed = gameState.seed;
+				game.extraScore = gameState.extraScore || 0;
+				game.lastPairTime = gameState.lastPairTime ? new Date(gameState.lastPairTime) : null;
+
+				refreshUiCallback();
 				drawCallback();
-			}, color: "green" },
-			{ text: "newGame", action: newGameCallback, color: "blue" }
-		];
-		showDialogCallback("welcomeBackTitle", "welcomeBackContent", buttons);
-	} else {
-		// If no valid saved state, start a new game immediately, with the given seed if provided
-		startGameLogic(game, layout, seedParam || undefined);
+
+				const buttons = [
+					{ text: 'resume', action: () => {
+						game.isGameActive = true;
+						if (game.messageBox) game.messageBox.classList.add('hidden-dialog');
+						startTimerCallback();
+						drawCallback();
+					}, color: 'green' },
+					{ text: 'newGame', action: newGameCallback, color: 'blue' }
+				];
+				showDialogCallback('welcomeBackTitle', 'welcomeBackContent', buttons);
+				return;
+			}
+		} catch (error) {
+			console.error('Could not restore saved game state.', error);
+		}
 	}
+
+	startGameLogic(game, layout, seedParam || undefined);
+	refreshUiCallback();
 };
 
 // Checks for win/lose conditions.
@@ -190,6 +502,7 @@ const checkWinLoseConditionLogic = (game, showWinLoseDialogCallback, isFreeCallb
 		// WIN condition
 		showWinLoseDialogCallback(true);
 		clearInterval(game.timerInterval);
+		game.isTimerRunning = false;
 		return;
 	}
 
@@ -208,46 +521,71 @@ const checkWinLoseConditionLogic = (game, showWinLoseDialogCallback, isFreeCallb
 
 	if (!hasFreePairs) {
 		// LOSE condition
-		showWinLoseDialogCallback(false, "noMoreMoves");
+		showWinLoseDialogCallback(false, 'noMoreMoves');
 		clearInterval(game.timerInterval);
+		game.isTimerRunning = false;
 		game.isGameActive = false;
 	}
 };
 
 const getScore = () => {
-	return ((game.extraScore + 10 * (game.initialPairs - game.pairsRemaining)) / game.timeElapsed).toFixed(1);
-}
+	const elapsedSeconds = Math.max(1, game.timeElapsed);
+	return ((game.extraScore + 10 * (game.initialPairs - game.pairsRemaining)) / elapsedSeconds).toFixed(1);
+};
 
 // Checks if a tile is "free".
 const isFreeLogic = (tile, allTiles, pyramidLayout) => {
-	const nextLayerIndex = tile.z + 1;
-	if (nextLayerIndex < pyramidLayout.length) {
-		const currentLayer = pyramidLayout[tile.z];
-		const nextLayer = pyramidLayout[nextLayerIndex];
+	const analysis = createLayoutAnalysis(pyramidLayout);
+	const tileIndex = analysis.indexByKey.get(getPositionKey(tile));
 
-		const xOffset = (currentLayer[0].length - nextLayer[0].length) / 2;
-		const yOffset = (currentLayer.length - nextLayer.length) / 2;
-
-		const tileOnTop = allTiles.find(t =>
-			t.z === nextLayerIndex
-			&& (t.x === Math.floor(tile.x - xOffset) || t.x === Math.ceil(tile.x - xOffset))
-			&& (t.y === Math.floor(tile.y - yOffset) || t.y == Math.ceil(tile.y - yOffset))
-		);
-
-		if (tileOnTop) return false;
+	if (tileIndex === undefined) {
+		return false;
 	}
 
-	const hasTileToLeft = allTiles.some(t => t.x === tile.x - 1 && t.y === tile.y && t.z === tile.z);
-	const hasTileToRight = allTiles.some(t => t.x === tile.x + 1 && t.y === tile.y && t.z === tile.z);
-
-	return !hasTileToLeft || !hasTileToRight;
+	return isPositionFreeInMask(tileIndex, buildOccupancyMask(allTiles, analysis), analysis);
 };
 
-// Export all the logic functions to be used by the main script
-window.mahjongLogic = {
+const mahjongLogic = {
 	startGameLogic,
 	checkWinLoseConditionLogic,
 	isFreeLogic,
 	saveGameStateLogic,
-	loadGameStateLogic
+	loadGameStateLogic,
+	clearSavedGameStateLogic: clearSavedGameState
 };
+
+// Export all the logic functions to be used by the main script
+if (typeof window !== 'undefined') {
+	window.mahjongLogic = mahjongLogic;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = {
+			tileTypes,
+			game,
+			getPositionKey,
+			getLayoutPositions,
+			countTilesInLayout,
+			createLayoutAnalysis,
+			buildOccupancyMask,
+			isPositionFreeInMask,
+			getFreePositionIndices,
+			createRandomSeed,
+			hashSeed,
+			getLocalStorage,
+			readSavedGameState,
+			writeSavedGameState,
+			clearSavedGameState,
+			createSeededRandom,
+		shuffleArray,
+		generateUUID,
+		findSolvablePairSequence,
+		createSolvableTileSet,
+		startGameLogic,
+		saveGameStateLogic,
+		loadGameStateLogic,
+		checkWinLoseConditionLogic,
+		getScore,
+		isFreeLogic,
+	};
+}
