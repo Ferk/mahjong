@@ -786,16 +786,13 @@ const initBrowserApp = async () => {
 		const scaleY = game.canvas.height / rect.height;
 		const inputX = (clientX - rect.left) * scaleX;
 		const inputY = (clientY - rect.top) * scaleY;
-		const scaledTileSize = {
-			width: game.tileSize.width * game.scale,
-			height: game.tileSize.height * game.scale,
-			depth: game.tileSize.depth * game.scale,
-		};
-		const { baseLayerWidth, baseLayerHeight } = ui.getBoardMetrics(game, activeLayout);
-		const boardWidth = baseLayerWidth * game.tileSize.width * game.scale;
-		const boardHeight = baseLayerHeight * game.tileSize.height * game.scale;
-		const globalOffsetX = (game.canvas.width - boardWidth) / 2;
-		const globalOffsetY = (game.canvas.height - boardHeight) / 2;
+		const {
+			scaledTileSize,
+			baseLayerWidth,
+			baseLayerHeight,
+			globalOffsetX,
+			globalOffsetY,
+		} = ui.getBoardRenderMetrics(game, activeLayout);
 
 		let clickedTile = null;
 		const sortedTiles = [...game.tiles].sort((firstTile, secondTile) => secondTile.z - firstTile.z);

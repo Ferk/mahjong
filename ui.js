@@ -97,6 +97,7 @@
 	const getLayoutDefinitions = () => layoutDefinitions;
 	const getLayoutPatterns = () => layoutPatterns;
 	const getActiveLayout = (game) => getLayoutDefinition(game.layoutId || defaultLayoutId).pattern;
+	const isCompactViewport = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
 	const getLayoutName = (layoutDefinition, language = state.currentLanguage) => {
 		if (!layoutDefinition || !layoutDefinition.name) {
 			return '';
@@ -105,18 +106,113 @@
 		return layoutDefinition.name[language] || layoutDefinition.name.en || layoutDefinition.id;
 	};
 
-	const getBoardMetrics = (game, activeLayout = getActiveLayout(game)) => {
-		const baseLayer = activeLayout[0];
+	const getLayoutBounds = (
+		layoutPattern,
+		tileWidth,
+		tileHeight,
+		elevationX,
+		elevationY,
+		extraWidth = 0,
+		extraHeight = 0
+	) => {
+		const baseLayer = layoutPattern[0];
 		const baseLayerWidth = baseLayer[0].length;
 		const baseLayerHeight = baseLayer.length;
-		const maxZ = activeLayout.length - 1;
-		const boardPadding = 8;
+		let minX = Infinity;
+		let maxX = -Infinity;
+		let minY = Infinity;
+		let maxY = -Infinity;
+
+		layoutPattern.forEach((layer, z) => {
+			const layerWidth = layer[0].length;
+			const layerHeight = layer.length;
+			const layerOffsetX = (baseLayerWidth - layerWidth) / 2 * tileWidth;
+			const layerOffsetY = (baseLayerHeight - layerHeight) / 2 * tileHeight;
+
+			for (let y = 0; y < layer.length; y++) {
+				for (let x = 0; x < layer[y].length; x++) {
+					if (layer[y][x] !== 'o') {
+						continue;
+					}
+
+					const tileX = x * tileWidth - z * elevationX + layerOffsetX;
+					const tileY = y * tileHeight - z * elevationY + layerOffsetY;
+
+					minX = Math.min(minX, tileX);
+					maxX = Math.max(maxX, tileX + tileWidth + extraWidth);
+					minY = Math.min(minY, tileY);
+					maxY = Math.max(maxY, tileY + tileHeight + extraHeight);
+				}
+			}
+		});
+
+		if (minX === Infinity) {
+			return {
+				baseLayerWidth,
+				baseLayerHeight,
+				minX: 0,
+				maxX: 0,
+				minY: 0,
+				maxY: 0,
+				width: 0,
+				height: 0,
+			};
+		}
 
 		return {
 			baseLayerWidth,
 			baseLayerHeight,
-			boardIdealWidth: baseLayerWidth * game.tileSize.width + maxZ * game.tileSize.depth + boardPadding * 2,
-			boardIdealHeight: baseLayerHeight * game.tileSize.height + maxZ * game.tileSize.depth + boardPadding * 2,
+			minX,
+			maxX,
+			minY,
+			maxY,
+			width: maxX - minX,
+			height: maxY - minY,
+		};
+	};
+
+	const getBoardMetrics = (game, activeLayout = getActiveLayout(game)) => {
+		const baseLayer = activeLayout[0];
+		const bounds = getLayoutBounds(
+			activeLayout,
+			game.tileSize.width,
+			game.tileSize.height,
+			game.tileSize.depth,
+			game.tileSize.depth,
+			game.tileSize.depth,
+			game.tileSize.depth
+		);
+
+		return {
+			baseLayerWidth: baseLayer[0].length,
+			baseLayerHeight: baseLayer.length,
+			boardIdealWidth: bounds.width,
+			boardIdealHeight: bounds.height,
+		};
+	};
+
+	const getBoardRenderMetrics = (game, activeLayout = getActiveLayout(game)) => {
+		const scaledTileSize = {
+			width: game.tileSize.width * game.scale,
+			height: game.tileSize.height * game.scale,
+			depth: game.tileSize.depth * game.scale,
+		};
+		const bounds = getLayoutBounds(
+			activeLayout,
+			scaledTileSize.width,
+			scaledTileSize.height,
+			scaledTileSize.depth,
+			scaledTileSize.depth,
+			scaledTileSize.depth,
+			scaledTileSize.depth
+		);
+
+		return {
+			scaledTileSize,
+			baseLayerWidth: bounds.baseLayerWidth,
+			baseLayerHeight: bounds.baseLayerHeight,
+			globalOffsetX: (game.canvas.width - bounds.width) / 2 - bounds.minX,
+			globalOffsetY: (game.canvas.height - bounds.height) / 2 - bounds.minY,
 		};
 	};
 
@@ -209,16 +305,13 @@
 		}
 
 		const activeLayout = getActiveLayout(game);
-		const scaledTileSize = {
-			width: game.tileSize.width * game.scale,
-			height: game.tileSize.height * game.scale,
-			depth: game.tileSize.depth * game.scale,
-		};
-		const { baseLayerWidth, baseLayerHeight } = getBoardMetrics(game, activeLayout);
-		const boardWidth = baseLayerWidth * game.tileSize.width * game.scale;
-		const boardHeight = baseLayerHeight * game.tileSize.height * game.scale;
-		const globalOffsetX = (game.canvas.width - boardWidth) / 2;
-		const globalOffsetY = (game.canvas.height - boardHeight) / 2;
+		const {
+			scaledTileSize,
+			baseLayerWidth,
+			baseLayerHeight,
+			globalOffsetX,
+			globalOffsetY,
+		} = getBoardRenderMetrics(game, activeLayout);
 
 		const sortedTiles = [...game.tiles].sort((firstTile, secondTile) => firstTile.z - secondTile.z);
 		sortedTiles.forEach(tile => {
@@ -252,11 +345,15 @@
 		const availableHeight = container.clientHeight;
 		const { boardIdealWidth, boardIdealHeight } = getBoardMetrics(game);
 		const boardAspectRatio = boardIdealWidth / boardIdealHeight;
+		const compactViewport = isCompactViewport();
 
 		let finalWidth;
 		let finalHeight;
 
-		if (availableWidth / availableHeight > boardAspectRatio) {
+		if (compactViewport) {
+			finalWidth = availableWidth;
+			finalHeight = availableHeight;
+		} else if (availableWidth / availableHeight > boardAspectRatio) {
 			finalHeight = availableHeight;
 			finalWidth = finalHeight * boardAspectRatio;
 		} else {
@@ -268,7 +365,14 @@
 		game.canvas.style.height = `${finalHeight}px`;
 		game.canvas.width = finalWidth * 4;
 		game.canvas.height = finalHeight * 4;
-		game.scale = finalWidth * 4 / boardIdealWidth;
+		if (compactViewport) {
+			game.scale = Math.min(
+				game.canvas.width / boardIdealWidth,
+				game.canvas.height / boardIdealHeight
+			);
+		} else {
+			game.scale = finalWidth * 4 / boardIdealWidth;
+		}
 
 		if (typeof drawCallback === 'function') {
 			drawCallback();
@@ -404,48 +508,6 @@
 		game.dialogButtons.style.display = buttons.length > 0 ? 'flex' : 'none';
 	};
 
-	const getLayoutPreviewBounds = (layoutPattern, tileWidth, tileHeight, elevationX, elevationY) => {
-		const baseLayer = layoutPattern[0];
-		const baseLayerWidth = baseLayer[0].length;
-		const baseLayerHeight = baseLayer.length;
-		let minX = Infinity;
-		let maxX = -Infinity;
-		let minY = Infinity;
-		let maxY = -Infinity;
-
-		layoutPattern.forEach((layer, z) => {
-			const layerWidth = layer[0].length;
-			const layerHeight = layer.length;
-			const layerOffsetX = (baseLayerWidth - layerWidth) / 2 * tileWidth;
-			const layerOffsetY = (baseLayerHeight - layerHeight) / 2 * tileHeight;
-
-			for (let y = 0; y < layer.length; y++) {
-				for (let x = 0; x < layer[y].length; x++) {
-					if (layer[y][x] !== 'o') {
-						continue;
-					}
-
-					const tileX = x * tileWidth - z * elevationX + layerOffsetX;
-					const tileY = y * tileHeight - z * elevationY + layerOffsetY;
-
-					minX = Math.min(minX, tileX);
-					maxX = Math.max(maxX, tileX + tileWidth);
-					minY = Math.min(minY, tileY);
-					maxY = Math.max(maxY, tileY + tileHeight);
-				}
-			}
-		});
-
-		return {
-			minX,
-			maxX,
-			minY,
-			maxY,
-			width: maxX - minX,
-			height: maxY - minY,
-		};
-	};
-
 	const createLayoutPreview = (layoutDefinition) => {
 		const previewWidth = 112;
 		const previewHeight = 112;
@@ -455,7 +517,7 @@
 		const elevationX = tileDepth * 0.6;
 		const elevationY = tileDepth * 0.45;
 		const padding = 10;
-		const unscaledBounds = getLayoutPreviewBounds(
+		const unscaledBounds = getLayoutBounds(
 			layoutDefinition.pattern,
 			tileWidth,
 			tileHeight,
@@ -471,7 +533,7 @@
 		const scaledElevationX = elevationX * scale;
 		const scaledElevationY = elevationY * scale;
 		const scaledTileDepth = tileDepth * scale;
-		const scaledBounds = getLayoutPreviewBounds(
+		const scaledBounds = getLayoutBounds(
 			layoutDefinition.pattern,
 			scaledTileWidth,
 			scaledTileHeight,
@@ -591,6 +653,7 @@
 		getLayoutName,
 		getActiveLayout,
 		getBoardMetrics,
+		getBoardRenderMetrics,
 		initUi,
 		preloadImages,
 		updatePairsDisplay,
