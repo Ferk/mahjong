@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const {
+	defaultLayoutId,
+	layoutPatterns,
+} = require('../layouts.js');
 
 const {
 	createSolvableTileSet,
@@ -9,26 +13,11 @@ const {
 	checkWinLoseConditionLogic,
 } = require('../mah.js');
 
-const defaultLayout = [
-	[
-		'ooooo',
-		'ooooo',
-		'ooooo',
-		'ooooo',
-		'ooooo',
-		'ooooo'
-	],
-	[
-		'ooo',
-		'ooo',
-		'ooo'
-	],
-	[
-		'oo',
-		'oo',
-	],
-	['o']
-];
+const defaultLayout = layoutPatterns[defaultLayoutId];
+const tower5Layout = layoutPatterns.tower5;
+const gateLayout = layoutPatterns.gate;
+const butterflyLayout = layoutPatterns.butterfly;
+const layoutCatalog = layoutPatterns;
 
 const getTileKey = (tile) => `${tile.x},${tile.y},${tile.z}`;
 
@@ -94,6 +83,21 @@ test('createSolvableTileSet is deterministic and replayable for seeded boards', 
 	replaySolution(differentBoard, defaultLayout);
 });
 
+test('createSolvableTileSet supports alternative layouts', () => {
+	const layoutsToCheck = [
+		{ layout: tower5Layout, seed: 'tower55', expectedTiles: 60 },
+		{ layout: gateLayout, seed: 'gate123', expectedTiles: 36 },
+		{ layout: butterflyLayout, seed: 'wing42', expectedTiles: 40 },
+	];
+
+	for (const { layout, seed, expectedTiles } of layoutsToCheck) {
+		const board = createSolvableTileSet(layout, seed);
+		assert.equal(board.tiles.length, expectedTiles);
+		assert.equal(board.solutionPairs.length, expectedTiles / 2);
+		replaySolution(board, layout);
+	}
+});
+
 test('isFreeLogic handles side and top blocking correctly', () => {
 	const rowLayout = [['ooo']];
 	const leftTile = { x: 0, y: 0, z: 0, value: '1m' };
@@ -123,11 +127,13 @@ test('saveGameStateLogic persists score state needed for restored games', () => 
 		pairsRemaining: 5,
 		initialPairs: 22,
 		seed: 'Z9ab12',
+		layoutId: 'gate',
 		extraScore: 17,
 		lastPairTime: new Date('2026-03-15T12:00:00.000Z'),
 	});
 
 	const savedState = JSON.parse(global.localStorage.getItem('mahjongGameState'));
+	assert.equal(savedState.layoutId, 'gate');
 	assert.equal(savedState.extraScore, 17);
 	assert.equal(savedState.lastPairTime, '2026-03-15T12:00:00.000Z');
 });
@@ -141,12 +147,13 @@ test('loadGameStateLogic restores a compatible saved game', () => {
 			pairsRemaining: 10,
 			initialPairs: 22,
 			seed: 'abc123',
+			layoutId: 'pyramid4',
 			extraScore: 9,
 			lastPairTime: '2026-03-15T12:00:00.000Z',
 		}),
 	});
 	global.window = {
-		location: { search: '?s=abc123' },
+		location: { search: '?s=abc123&l=pyramid4' },
 		history: { pushState() {} },
 		updatePairsDisplay() {},
 	};
@@ -169,7 +176,8 @@ test('loadGameStateLogic restores a compatible saved game', () => {
 
 	loadGameStateLogic(
 		game,
-		defaultLayout,
+		layoutCatalog,
+		defaultLayoutId,
 		() => {},
 		(...args) => { dialogCall = args; },
 		() => { drawCalls++; },
@@ -181,6 +189,7 @@ test('loadGameStateLogic restores a compatible saved game', () => {
 	assert.equal(game.timeElapsed, 33);
 	assert.equal(game.pairsRemaining, 10);
 	assert.equal(game.extraScore, 9);
+	assert.equal(game.layoutId, 'pyramid4');
 	assert.ok(game.lastPairTime instanceof Date);
 	assert.equal(drawCalls, 1);
 	assert.equal(refreshCalls, 1);
@@ -199,11 +208,12 @@ test('loadGameStateLogic starts a new solvable game when saved state is incompat
 			timeElapsed: 12,
 			pairsRemaining: 4,
 			initialPairs: 22,
+			layoutId: 'pyramid4',
 			seed: 'keepme',
 		}),
 	});
 	global.window = {
-		location: { search: '?s=newSeed' },
+		location: { search: '?s=newSeed&l=gate' },
 		history: { pushState() {} },
 		updatePairsDisplay() {},
 	};
@@ -226,30 +236,34 @@ test('loadGameStateLogic starts a new solvable game when saved state is incompat
 
 	let dialogCalls = 0;
 	let refreshCalls = 0;
+	let drawCalls = 0;
 
 	loadGameStateLogic(
 		game,
-		defaultLayout,
+		layoutCatalog,
+		defaultLayoutId,
 		() => {},
 		() => { dialogCalls++; },
-		() => {},
+		() => { drawCalls++; },
 		() => {},
 		() => { refreshCalls++; }
 	);
 
 	assert.equal(dialogCalls, 0);
 	assert.equal(refreshCalls, 1);
-	assert.equal(game.tiles.length, 44);
-	assert.equal(game.initialPairs, 22);
-	assert.equal(game.pairsRemaining, 22);
+	assert.equal(drawCalls, 1);
+	assert.equal(game.tiles.length, 36);
+	assert.equal(game.initialPairs, 18);
+	assert.equal(game.pairsRemaining, 18);
 	assert.equal(game.seed, 'newSeed');
+	assert.equal(game.layoutId, 'gate');
 
 	replaySolution(
 		{
 			tiles: game.tiles.map(tile => ({ x: tile.x, y: tile.y, z: tile.z, value: tile.value })),
-			solutionPairs: createSolvableTileSet(defaultLayout, 'newSeed').solutionPairs,
+			solutionPairs: createSolvableTileSet(gateLayout, 'newSeed').solutionPairs,
 		},
-		defaultLayout
+		gateLayout
 	);
 });
 
@@ -287,19 +301,24 @@ test('loadGameStateLogic falls back to a new game when storage access throws', (
 		selectedTile: null,
 	};
 
+	let drawCalls = 0;
+
 	assert.doesNotThrow(() => {
 		loadGameStateLogic(
 			game,
-			defaultLayout,
+			layoutCatalog,
+			defaultLayoutId,
 			() => {},
 			() => {},
-			() => {},
+			() => { drawCalls++; },
 			() => {},
 			() => {}
 		);
 	});
 
+	assert.equal(drawCalls, 1);
 	assert.equal(game.seed, 'abc123');
+	assert.equal(game.layoutId, 'pyramid4');
 	assert.equal(game.tiles.length, 44);
 	assert.equal(game.initialPairs, 22);
 	assert.equal(game.pairsRemaining, 22);

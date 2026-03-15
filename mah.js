@@ -23,6 +23,7 @@ const game = {
 	timerDisplay: null,
 	isTimerRunning: false,
 	isGameActive: false,
+	layoutId: null,
 	pairsRemaining: 0,
 	initialPairs: 0,
 	pairsDisplay: null,
@@ -256,6 +257,26 @@ const clearSavedGameState = () => {
 	}
 };
 
+const resolveLayoutId = (layoutId, layouts, defaultLayoutId) => {
+	if (layoutId && layouts[layoutId]) {
+		return layoutId;
+	}
+
+	return defaultLayoutId;
+};
+
+const updateGameUrl = (seed, layoutId) => {
+	if (typeof window === 'undefined' || !window.history || !window.history.pushState) {
+		return;
+	}
+
+	const searchParams = new URLSearchParams({
+		s: seed,
+		l: layoutId,
+	});
+	window.history.pushState({}, '', `?${searchParams.toString()}`);
+};
+
 // A simple seeded pseudo-random number generator (LCG).
 const createSeededRandom = (seed) => {
 	let state = seed % 2147483647;
@@ -385,7 +406,7 @@ const createSolvableTileSet = (pyramidLayout, seed) => {
 };
 
 // Starts a new game and updates the game state object
-const startGameLogic = (game, pyramidLayout, seed = createRandomSeed()) => {
+const startGameLogic = (game, pyramidLayout, seed = createRandomSeed(), layoutId = game.layoutId) => {
 	game.isGameActive = true;
 	game.tiles = [];
 	game.selectedTile = null;
@@ -397,12 +418,10 @@ const startGameLogic = (game, pyramidLayout, seed = createRandomSeed()) => {
 	if (game.messageBox) game.messageBox.classList.add('hidden-dialog');
 
 	game.seed = normalizeSeed(seed);
+	game.layoutId = layoutId || game.layoutId || 'default';
 	game.lastPairTime = null;
 
-	// Update URI parameters to make it shareable
-	if (typeof window !== 'undefined' && window.history && window.history.pushState) {
-		window.history.pushState({}, '', `?s=${encodeURIComponent(game.seed)}`);
-	}
+	updateGameUrl(game.seed, game.layoutId);
 
 	let generatedBoard;
 	try {
@@ -425,8 +444,8 @@ const startGameLogic = (game, pyramidLayout, seed = createRandomSeed()) => {
 	game.extraScore = 0;
 	game.showBlockedHighlight = false;
 
-	if (typeof window !== 'undefined' && typeof window.updatePairsDisplay === 'function') {
-		window.updatePairsDisplay();
+	if (typeof window !== 'undefined' && window.mahjongUi && typeof window.mahjongUi.updatePairsDisplay === 'function') {
+		window.mahjongUi.updatePairsDisplay(game);
 	}
 };
 
@@ -438,6 +457,7 @@ const saveGameStateLogic = (game) => {
 		pairsRemaining: game.pairsRemaining,
 		initialPairs: game.initialPairs,
 		seed: game.seed,
+		layoutId: game.layoutId,
 		extraScore: game.extraScore,
 		lastPairTime: game.lastPairTime ? game.lastPairTime.toISOString() : null,
 	};
@@ -447,7 +467,8 @@ const saveGameStateLogic = (game) => {
 // Loads a saved game state from localStorage, or starts a new one if none exists.
 const loadGameStateLogic = (
 	game,
-	layout,
+	layouts,
+	defaultLayoutId,
 	newGameCallback,
 	showDialogCallback,
 	drawCallback,
@@ -456,21 +477,28 @@ const loadGameStateLogic = (
 ) => {
 	const urlParams = new URLSearchParams(window.location.search);
 	const seedParam = urlParams.get('s');
+	const requestedLayoutId = urlParams.has('l')
+		? resolveLayoutId(urlParams.get('l'), layouts, defaultLayoutId)
+		: null;
 	const savedState = readSavedGameState();
 
 	if (savedState) {
 		try {
 			const gameState = JSON.parse(savedState);
 			const sameSeed = !seedParam || String(gameState.seed) === seedParam;
+			const savedLayoutId = resolveLayoutId(gameState.layoutId, layouts, defaultLayoutId);
+			const sameLayout = !requestedLayoutId || savedLayoutId === requestedLayoutId;
 
-			if (gameState.pairsRemaining > 0 && sameSeed) {
+			if (gameState.pairsRemaining > 0 && sameSeed && sameLayout) {
 				game.tiles = gameState.tiles;
 				game.timeElapsed = gameState.timeElapsed;
 				game.pairsRemaining = gameState.pairsRemaining;
 				game.initialPairs = gameState.initialPairs;
 				game.seed = gameState.seed;
+				game.layoutId = savedLayoutId;
 				game.extraScore = gameState.extraScore || 0;
 				game.lastPairTime = gameState.lastPairTime ? new Date(gameState.lastPairTime) : null;
+				updateGameUrl(game.seed, game.layoutId);
 
 				refreshUiCallback();
 				drawCallback();
@@ -492,8 +520,10 @@ const loadGameStateLogic = (
 		}
 	}
 
-	startGameLogic(game, layout, seedParam || undefined);
+	const layoutIdToStart = requestedLayoutId || defaultLayoutId;
+	startGameLogic(game, layouts[layoutIdToStart], seedParam || undefined, layoutIdToStart);
 	refreshUiCallback();
+	drawCallback();
 };
 
 // Checks for win/lose conditions.
@@ -545,6 +575,306 @@ const isFreeLogic = (tile, allTiles, pyramidLayout) => {
 	return isPositionFreeInMask(tileIndex, buildOccupancyMask(allTiles, analysis), analysis);
 };
 
+const registerServiceWorker = () => {
+	if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+		return;
+	}
+
+	window.addEventListener('load', () => {
+		navigator.serviceWorker.register('/service-worker.js')
+			.then((registration) => {
+				console.log('Service Worker registered with scope:', registration.scope);
+			})
+			.catch((error) => {
+				console.log('Service Worker registration failed:', error);
+			});
+	});
+};
+
+const initBrowserApp = async () => {
+	const ui = window.mahjongUi;
+	if (!ui) {
+		console.error('ui.js must be loaded before mah.js.');
+		return;
+	}
+
+	const draw = () => ui.draw(game, isFree);
+	const resizeCanvas = () => ui.resizeCanvas(game, draw);
+	const refreshBoard = () => {
+		if (typeof ui.scheduleResize === 'function') {
+			ui.scheduleResize(game, draw);
+			return;
+		}
+
+		resizeCanvas();
+	};
+	const saveGameState = () => saveGameStateLogic(game);
+	const updateHud = () => {
+		ui.updatePairsDisplay(game);
+		ui.updateTimerDisplay(game);
+	};
+
+	function startGame(seed, layoutId = game.layoutId || ui.defaultLayoutId) {
+		const selectedLayout = ui.getLayoutDefinition(layoutId);
+		startGameLogic(game, selectedLayout.pattern, seed, selectedLayout.id);
+		refreshBoard();
+	}
+
+	function loadGameState() {
+		loadGameStateLogic(
+			game,
+			ui.getLayoutPatterns(),
+			ui.defaultLayoutId,
+			startGame,
+			(title, content, buttons) => ui.showDialog(game, title, content, buttons),
+			refreshBoard,
+			startTimer,
+			updateHud
+		);
+	}
+
+	function checkWinLoseCondition() {
+		checkWinLoseConditionLogic(game, showWinLoseDialog, isFree);
+	}
+
+	function isFree(tile) {
+		return isFreeLogic(tile, game.tiles, ui.getActiveLayout(game));
+	}
+
+	function startTimer() {
+		if (!game.isTimerRunning) {
+			game.isTimerRunning = true;
+			game.timerInterval = setInterval(() => {
+				game.timeElapsed++;
+				ui.updateTimerDisplay(game);
+			}, 1000);
+		}
+	}
+
+	function handleClick(event) {
+		if (!game.isGameActive) {
+			return checkWinLoseCondition();
+		}
+
+		handleInput(event.clientX, event.clientY);
+	}
+
+	function handleTouch(event) {
+		if (!game.isGameActive) {
+			return;
+		}
+
+		event.preventDefault();
+		const touch = event.touches[0];
+		handleInput(touch.clientX, touch.clientY);
+	}
+
+	function handleInput(clientX, clientY) {
+		const rect = game.canvas.getBoundingClientRect();
+		const activeLayout = ui.getActiveLayout(game);
+		const scaleX = game.canvas.width / rect.width;
+		const scaleY = game.canvas.height / rect.height;
+		const inputX = (clientX - rect.left) * scaleX;
+		const inputY = (clientY - rect.top) * scaleY;
+		const scaledTileSize = {
+			width: game.tileSize.width * game.scale,
+			height: game.tileSize.height * game.scale,
+			depth: game.tileSize.depth * game.scale,
+		};
+		const { baseLayerWidth, baseLayerHeight } = ui.getBoardMetrics(game, activeLayout);
+		const boardWidth = baseLayerWidth * game.tileSize.width * game.scale;
+		const boardHeight = baseLayerHeight * game.tileSize.height * game.scale;
+		const globalOffsetX = (game.canvas.width - boardWidth) / 2;
+		const globalOffsetY = (game.canvas.height - boardHeight) / 2;
+
+		let clickedTile = null;
+		const sortedTiles = [...game.tiles].sort((firstTile, secondTile) => secondTile.z - firstTile.z);
+
+		for (const tile of sortedTiles) {
+			const layer = activeLayout[tile.z];
+			const layerWidth = layer[0].length;
+			const layerHeight = layer.length;
+			const layerOffsetX = (baseLayerWidth - layerWidth) / 2 * scaledTileSize.width;
+			const layerOffsetY = (baseLayerHeight - layerHeight) / 2 * scaledTileSize.height;
+			const tileX = tile.x * scaledTileSize.width - tile.z * scaledTileSize.depth + layerOffsetX + globalOffsetX;
+			const tileY = tile.y * scaledTileSize.height - tile.z * scaledTileSize.depth + layerOffsetY + globalOffsetY;
+
+			if (
+				inputX >= tileX &&
+				inputX <= tileX + scaledTileSize.width + scaledTileSize.depth &&
+				inputY >= tileY &&
+				inputY <= tileY + scaledTileSize.height + scaledTileSize.depth
+			) {
+				clickedTile = tile;
+				break;
+			}
+		}
+
+		if (!clickedTile) {
+			return;
+		}
+
+		if (!game.isTimerRunning) {
+			startTimer();
+		}
+
+		if (isFree(clickedTile)) {
+			game.showBlockedHighlight = false;
+
+			if (!game.selectedTile) {
+				game.selectedTile = clickedTile;
+			} else if (game.selectedTile.id === clickedTile.id) {
+				game.selectedTile = null;
+			} else if (game.selectedTile.value === clickedTile.value) {
+				const time = new Date();
+				const elapsed = (time - game.lastPairTime) / 1000;
+				const bonus = Math.min(30, 60 / Math.ceil(elapsed));
+
+				if (bonus > 10) {
+					showSparkleEffect(`${clientX}px`, `${clientY}px`);
+					console.log(`${elapsed.toFixed(1)}s pair! Bonus score: ${bonus}`);
+				}
+
+				game.extraScore += bonus;
+				game.tiles = game.tiles.filter(tile => tile.id !== game.selectedTile.id && tile.id !== clickedTile.id);
+				game.pairsRemaining--;
+				game.lastPairTime = new Date();
+				ui.updatePairsDisplay(game);
+				game.selectedTile = null;
+				saveGameState();
+				checkWinLoseCondition();
+			} else {
+				game.selectedTile = clickedTile;
+			}
+		} else {
+			game.showBlockedHighlight = true;
+			game.selectedTile = null;
+		}
+
+		draw();
+	}
+
+	function showGameMenu() {
+		game.isGameActive = false;
+		clearInterval(game.timerInterval);
+		game.isTimerRunning = false;
+		saveGameState();
+
+		ui.showDialog(game, 'gamePausedTitle', '', [
+			{ text: 'resume', action: resumeGame, color: 'green' },
+			{ text: 'howToPlay', action: showInstructions, color: 'gray' },
+			{ text: 'restart', action: restartGame, color: 'yellow' },
+			{ text: 'newGame', action: newGame, color: 'blue' },
+			{ text: 'changeLayout', action: showLayoutSelector, color: 'gray' },
+		]);
+	}
+
+	function newGame() {
+		startGame(undefined, game.layoutId);
+		ui.updateTimerDisplay(game);
+	}
+
+	function restartGame() {
+		startGame(game.seed, game.layoutId);
+		ui.updateTimerDisplay(game);
+	}
+
+	function changeLayout(layoutId) {
+		startGame(undefined, layoutId);
+		ui.updateTimerDisplay(game);
+	}
+
+	function resumeGame() {
+		game.isGameActive = true;
+		game.messageBox.classList.add('hidden-dialog');
+		startTimer();
+		refreshBoard();
+	}
+
+	function showLayoutSelector() {
+		const buttons = ui.getLayoutDefinitions().map(layoutDefinition => ({
+			text: ui.getLayoutName(layoutDefinition),
+			action: () => changeLayout(layoutDefinition.id),
+			color: layoutDefinition.id === game.layoutId ? 'green' : 'blue',
+		}));
+		buttons.push({ text: 'back', action: showGameMenu, color: 'gray' });
+		ui.showDialog(game, 'chooseLayoutTitle', 'chooseLayoutContent', buttons);
+	}
+
+	function showInstructions() {
+		ui.showDialog(game, 'howToPlayTitle', 'howToPlayContent', [
+			{ text: 'resume', action: resumeGame, color: 'green' }
+		]);
+	}
+
+	function reviewBoard() {
+		game.messageBox.classList.add('hidden-dialog');
+		game.isGameActive = false;
+		game.showBlockedHighlight = true;
+		draw();
+	}
+
+	function shareURI() {
+		const strings = ui.getStrings();
+		const shareData = {
+			title: 'Kyodai Mahjong',
+			text: strings.shareMessage,
+			url: window.location.href
+		};
+
+		navigator.share(shareData)
+			.then(() => console.log('Successfully shared'))
+			.catch((error) => console.log('Error sharing', error));
+	}
+
+	function showWinLoseDialog(isWin, reasonString = null) {
+		game.isGameActive = false;
+		const strings = ui.getStrings();
+		let title = isWin ? 'winTitle' : 'gameOverTitle';
+		let content = '';
+		let buttons = [];
+		let effectFunction = (callback) => callback();
+
+		if (isWin) {
+			const minutes = Math.floor(game.timeElapsed / 60).toString().padStart(2, '0');
+			const seconds = (game.timeElapsed % 60).toString().padStart(2, '0');
+			content = `<b>${strings.score}: ${getScore()}</b><p>${strings.winContent(game.initialPairs, `${minutes}:${seconds}`)}</p>`;
+			if (window.showWinEffect) {
+				effectFunction = window.showWinEffect;
+			}
+		} else {
+			content = ui.translate(reasonString);
+			buttons.push({ text: 'reviewBoard', action: reviewBoard, color: 'gray' });
+			if (window.showGameOverEffect) {
+				effectFunction = window.showGameOverEffect;
+			}
+		}
+
+		if (navigator.share) {
+			buttons.push({ text: 'share', action: shareURI, color: 'green' });
+		}
+
+		buttons.push({ text: 'restart', action: restartGame, color: 'yellow' });
+		buttons.push({ text: 'newGame', action: newGame, color: 'blue' });
+
+		effectFunction(() => ui.showDialog(game, title, content, buttons));
+		clearSavedGameState();
+	}
+
+	game.layoutId = ui.defaultLayoutId;
+	ui.initUi(game, {
+		onCanvasClick: handleClick,
+		onCanvasTouch: handleTouch,
+		onResize: resizeCanvas,
+		onBeforeUnload: saveGameState,
+		onMenuClick: showGameMenu,
+	});
+
+	await ui.preloadImages(game, tileTypes);
+	loadGameState();
+	refreshBoard();
+};
+
 const mahjongLogic = {
 	startGameLogic,
 	checkWinLoseConditionLogic,
@@ -557,26 +887,28 @@ const mahjongLogic = {
 // Export all the logic functions to be used by the main script
 if (typeof window !== 'undefined') {
 	window.mahjongLogic = mahjongLogic;
+	registerServiceWorker();
+	window.addEventListener('load', initBrowserApp);
 }
 
 if (typeof module !== 'undefined' && module.exports) {
 	module.exports = {
-			tileTypes,
-			game,
-			getPositionKey,
-			getLayoutPositions,
-			countTilesInLayout,
-			createLayoutAnalysis,
-			buildOccupancyMask,
-			isPositionFreeInMask,
-			getFreePositionIndices,
-			createRandomSeed,
-			hashSeed,
-			getLocalStorage,
-			readSavedGameState,
-			writeSavedGameState,
-			clearSavedGameState,
-			createSeededRandom,
+		tileTypes,
+		game,
+		getPositionKey,
+		getLayoutPositions,
+		countTilesInLayout,
+		createLayoutAnalysis,
+		buildOccupancyMask,
+		isPositionFreeInMask,
+		getFreePositionIndices,
+		createRandomSeed,
+		hashSeed,
+		getLocalStorage,
+		readSavedGameState,
+		writeSavedGameState,
+		clearSavedGameState,
+		createSeededRandom,
 		shuffleArray,
 		generateUUID,
 		findSolvablePairSequence,

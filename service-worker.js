@@ -8,6 +8,8 @@ const TILE_IMAGES = [
 const urlsToCache = [
   '/',
   'index.html',
+  'layouts.js',
+  'ui.js',
   'mah.js',
   'effects.js',
   'manifest.json',
