@@ -1,12 +1,12 @@
 (function() {
-	const defaultLayoutId = 'pyramid4';
+	const defaultLayoutId = 'pyramid';
 
 	const layoutDefinitions = [
 		{
-			id: 'pyramid4',
+			id: 'pyramid',
 			name: {
-				en: '4-Layer Pyramid',
-				es: 'Pirámide de 4 Capas',
+				en: 'Pyramid',
+				es: 'Pirámide',
 			},
 			pattern: [
 				[
@@ -32,10 +32,45 @@
 			]
 		},
 		{
-			id: 'tower5',
+			id: 'heart',
 			name: {
-				en: '5-Layer Tower',
-				es: 'Torre de 5 Capas',
+				en: 'Heart',
+				es: 'Corazón',
+			},
+			pattern: [
+				[
+					' oo  oo ',
+					'oooooooo',
+					'oooooooo',
+					' oooooo ',
+					'  oooo  ',
+					'  oooo  ',
+					'   oo   '
+				],
+				[
+					' oooo ',
+					'oooooo',
+					' oooo ',
+					'  oo  '
+				],
+				[
+					' ooo ',
+					'ooooo',
+					' ooo ',
+					'  o  '
+				],
+				[
+					' oo ',
+					'oooo',
+					' oo '
+				]
+			]
+		},
+		{
+			id: 'tower',
+			name: {
+				en: 'Tower',
+				es: 'Torre',
 			},
 			pattern: [
 				[
@@ -69,52 +104,145 @@
 			]
 		},
 		{
-			id: 'gate',
+			id: 'egg',
 			name: {
-				en: 'Gate',
-				es: 'Puerta',
+				en: 'Egg',
+				es: 'Huevo',
 			},
 			pattern: [
 				[
-					'oooooo',
-					'oo  oo',
-					'oo  oo',
-					'oooooo'
+					'   oo   ',
+					'  oooo  ',
+					' oooooo ',
+					' oooooo ',
+					'oooooooo',
+					'oooooooo',
+					' oooooo ',
+					' oooooo ',
+					'  oooo  '
 				],
 				[
-					'oooo',
-					'o  o',
-					'oooo'
+					'        ',
+					'        ',
+					'  oooo  ',
+					' oooooo ',
+					' oooooo ',
+					'  oooo  '
 				],
 				[
-					'oo',
-					'oo',
+					'        ',
+					'        ',
+					'   oo   ',
+					'  oooo  ',
+					'   oo   '
+				],
+				[
+					'      ',
+					'      ',
+					'  oo  ',
+					'  oo  '
+				],
+				[
+					'    ',
+					'    ',
+					' oo '
+				]
+			]
+		},
+		{
+			id: 'turtle',
+			name: {
+				en: 'Turtle',
+				es: 'Tortuga',
+			},
+			pattern: [
+				[
+					'   o   ',
+					'  ooo  ',
+					' ooooo ',
+					' ooooo ',
+					'ooooooo',
+					' ooooo ',
+					'ooooooo',
+					'  ooo  ',
+					'   o   '
+				],
+				[
+					'  ooo  ',
+					' ooooo ',
+					'ooooooo',
+					' ooooo ',
+				],
+				[
+					' ooo ',
+					'ooooo',
+					' ooo '
+				],
+				[
+					' ooo ',
+					' ooo '
+				],
+				[
 					'oo'
 				]
 			]
 		},
 		{
-			id: 'butterfly',
+			id: 'lantern',
 			name: {
-				en: 'Butterfly',
-				es: 'Mariposa',
+				en: 'Lantern',
+				es: 'Farol',
 			},
 			pattern: [
 				[
-					'oo    oo',
+					'   oo   ',
+					'   oo   ',
+					'  oooo  ',
+					' oooooo ',
 					'oooooooo',
 					'oooooooo',
-					'oo    oo'
+					'oooooooo',
+					'oooooooo',
+					'oooooooo',
+					'oooooooo',
+					'oooooooo',
+					' oooooo ',
+					'  oooo  ',
+					'   oo   ',
+					'   oo   '
 				],
 				[
-					'oooooo',
-					'oooooo'
+					'        ',
+					'        ',
+					'  oooo  ',
+					' oooooo ',
+					'oooooooo',
+					' oooooo ',
+					'  oooo  '
 				],
 				[
-					'oooo'
+					'        ',
+					'        ',
+					'  oooo  ',
+					' oooooo ',
+					' oooooo ',
+					'  oooo  '
+				],
+				[
+					'      ',
+					'      ',
+					'  oo  ',
+					' oooo ',
+					'  oo  '
+				],
+				[
+					'    ',
+					'    ',
+					' oo ',
+					' oo '
 				]
 			]
-		}
+		},
 	];
 
 	const layoutOptions = layoutDefinitions.reduce((allLayouts, definition) => {

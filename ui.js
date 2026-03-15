@@ -19,6 +19,9 @@
 			changeLayout: 'Change Layout',
 			chooseLayoutTitle: 'Choose Layout',
 			chooseLayoutContent: 'Pick a layout for the next game.',
+			layoutTiles: 'Tiles',
+			layoutOpen: 'Open',
+			layoutLayers: 'Layers',
 			reviewBoard: 'Review Board',
 			share: 'Share',
 			shareMessage: 'Can you solve this Mahjong board?',
@@ -45,6 +48,9 @@
 			changeLayout: 'Cambiar Diseño',
 			chooseLayoutTitle: 'Elegir Diseño',
 			chooseLayoutContent: 'Elige un diseño para la siguiente partida.',
+			layoutTiles: 'Fichas',
+			layoutOpen: 'Libres',
+			layoutLayers: 'Capas',
 			reviewBoard: 'Revisar Tablero',
 			share: 'Compartir',
 			shareMessage: '¿Eres capaz de resolver este Mahjong?',
@@ -281,6 +287,7 @@
 		game.canvas = document.getElementById('game-canvas');
 		game.ctx = game.canvas.getContext('2d');
 		game.messageBox = document.getElementById('message-box');
+		game.dialogPanel = document.getElementById('dialog-panel');
 		game.dialogTitle = document.getElementById('dialog-title');
 		game.dialogContent = document.getElementById('dialog-content');
 		game.dialogButtons = document.getElementById('dialog-buttons');
@@ -338,39 +345,239 @@
 		game.timerDisplay.textContent = `${minutes}:${seconds}`;
 	};
 
-	const showDialog = (game, title, content, buttons) => {
+	const createDialogButton = (buttonData) => {
+		const button = document.createElement('button');
+		button.type = 'button';
+		button.textContent = translate(buttonData.text);
+		button.onclick = buttonData.action;
+		button.className = 'px-6 py-3 rounded-full text-white font-bold transition-colors duration-300 shadow-lg';
+
+		switch (buttonData.color) {
+			case 'green':
+				button.classList.add('bg-green-500', 'hover:bg-green-600');
+				break;
+			case 'yellow':
+				button.classList.add('bg-yellow-500', 'hover:bg-yellow-600');
+				break;
+			case 'blue':
+				button.classList.add('bg-blue-500', 'hover:bg-blue-600');
+				break;
+			case 'gray':
+				button.classList.add('bg-gray-500', 'hover:bg-gray-600');
+				break;
+		}
+
+		return button;
+	};
+
+	const prepareDialog = (game, title, content) => {
 		const resolvedTitle = translate(title);
 		const resolvedContent = translate(content);
 
 		game.dialogTitle.textContent = resolvedTitle;
 		game.dialogContent.innerHTML = resolvedContent;
 		game.dialogButtons.innerHTML = '';
+	};
+
+	const setDialogVariant = (game, variant = 'default') => {
+		if (!game.dialogPanel) {
+			return;
+		}
+
+		game.dialogPanel.classList.remove('w-auto', 'max-w-xl', 'w-11/12', 'max-w-4xl');
+
+		if (variant === 'wide') {
+			game.dialogPanel.classList.add('w-11/12', 'max-w-4xl');
+			return;
+		}
+
+		game.dialogPanel.classList.add('w-auto', 'max-w-xl');
+	};
+
+	const appendDialogButtons = (game, buttons) => {
+		game.dialogButtons.innerHTML = '';
 
 		buttons.forEach(buttonData => {
-			const button = document.createElement('button');
-			button.textContent = translate(buttonData.text);
-			button.onclick = buttonData.action;
-			button.className = 'px-6 py-3 rounded-full text-white font-bold transition-colors duration-300 shadow-lg';
-
-			switch (buttonData.color) {
-				case 'green':
-					button.classList.add('bg-green-500', 'hover:bg-green-600');
-					break;
-				case 'yellow':
-					button.classList.add('bg-yellow-500', 'hover:bg-yellow-600');
-					break;
-				case 'blue':
-					button.classList.add('bg-blue-500', 'hover:bg-blue-600');
-					break;
-				case 'gray':
-					button.classList.add('bg-gray-500', 'hover:bg-gray-600');
-					break;
-			}
-
-			game.dialogButtons.appendChild(button);
+			game.dialogButtons.appendChild(createDialogButton(buttonData));
 		});
 
 		game.dialogButtons.style.display = buttons.length > 0 ? 'flex' : 'none';
+	};
+
+	const getLayoutPreviewBounds = (layoutPattern, tileWidth, tileHeight, elevationX, elevationY) => {
+		const baseLayer = layoutPattern[0];
+		const baseLayerWidth = baseLayer[0].length;
+		const baseLayerHeight = baseLayer.length;
+		let minX = Infinity;
+		let maxX = -Infinity;
+		let minY = Infinity;
+		let maxY = -Infinity;
+
+		layoutPattern.forEach((layer, z) => {
+			const layerWidth = layer[0].length;
+			const layerHeight = layer.length;
+			const layerOffsetX = (baseLayerWidth - layerWidth) / 2 * tileWidth;
+			const layerOffsetY = (baseLayerHeight - layerHeight) / 2 * tileHeight;
+
+			for (let y = 0; y < layer.length; y++) {
+				for (let x = 0; x < layer[y].length; x++) {
+					if (layer[y][x] !== 'o') {
+						continue;
+					}
+
+					const tileX = x * tileWidth - z * elevationX + layerOffsetX;
+					const tileY = y * tileHeight - z * elevationY + layerOffsetY;
+
+					minX = Math.min(minX, tileX);
+					maxX = Math.max(maxX, tileX + tileWidth);
+					minY = Math.min(minY, tileY);
+					maxY = Math.max(maxY, tileY + tileHeight);
+				}
+			}
+		});
+
+		return {
+			minX,
+			maxX,
+			minY,
+			maxY,
+			width: maxX - minX,
+			height: maxY - minY,
+		};
+	};
+
+	const createLayoutPreview = (layoutDefinition) => {
+		const previewWidth = 112;
+		const previewHeight = 112;
+		const tileWidth = 14;
+		const tileHeight = 11;
+		const tileDepth = 1.8;
+		const elevationX = tileDepth * 0.6;
+		const elevationY = tileDepth * 0.45;
+		const padding = 10;
+		const unscaledBounds = getLayoutPreviewBounds(
+			layoutDefinition.pattern,
+			tileWidth,
+			tileHeight,
+			elevationX,
+			elevationY
+		);
+		const scale = Math.min(
+			(previewWidth - padding * 2) / unscaledBounds.width,
+			(previewHeight - padding * 2) / unscaledBounds.height
+		);
+		const scaledTileWidth = tileWidth * scale;
+		const scaledTileHeight = tileHeight * scale;
+		const scaledElevationX = elevationX * scale;
+		const scaledElevationY = elevationY * scale;
+		const scaledTileDepth = tileDepth * scale;
+		const scaledBounds = getLayoutPreviewBounds(
+			layoutDefinition.pattern,
+			scaledTileWidth,
+			scaledTileHeight,
+			scaledElevationX,
+			scaledElevationY
+		);
+		const globalOffsetX = (previewWidth - scaledBounds.width) / 2 - scaledBounds.minX;
+		const globalOffsetY = (previewHeight - scaledBounds.height) / 2 - scaledBounds.minY;
+		const baseLayer = layoutDefinition.pattern[0];
+		const baseLayerWidth = baseLayer[0].length;
+		const baseLayerHeight = baseLayer.length;
+		const preview = document.createElement('div');
+
+		preview.className = 'relative mx-auto h-28 w-28 max-w-full rounded-2xl bg-slate-100/70 ring-1 ring-slate-200/80';
+
+		layoutDefinition.pattern.forEach((layer, z) => {
+			const layerWidth = layer[0].length;
+			const layerHeight = layer.length;
+			const layerOffsetX = (baseLayerWidth - layerWidth) / 2 * scaledTileWidth;
+			const layerOffsetY = (baseLayerHeight - layerHeight) / 2 * scaledTileHeight;
+			const faceLightness = Math.max(74, 91 - z * 4);
+			const sideLightness = Math.max(66, 84 - z * 4);
+
+			for (let y = 0; y < layer.length; y++) {
+				for (let x = 0; x < layer[y].length; x++) {
+					if (layer[y][x] !== 'o') {
+						continue;
+					}
+
+					const tile = document.createElement('div');
+					const tileX = x * scaledTileWidth - z * scaledElevationX + layerOffsetX + globalOffsetX;
+					const tileY = y * scaledTileHeight - z * scaledElevationY + layerOffsetY + globalOffsetY;
+
+					tile.className = 'absolute rounded-sm border';
+					tile.style.left = `${tileX}px`;
+					tile.style.top = `${tileY}px`;
+					tile.style.width = `${scaledTileWidth}px`;
+					tile.style.height = `${scaledTileHeight}px`;
+					tile.style.zIndex = String(10 + z);
+					tile.style.background = `hsl(39 88% ${faceLightness}%)`;
+					tile.style.borderColor = `hsl(33 42% ${Math.max(58, faceLightness - 16)}%)`;
+					tile.style.boxShadow = `${scaledTileDepth * 0.7}px ${scaledTileDepth * 0.7}px 0 hsl(34 42% ${sideLightness}% / 0.4)`;
+					preview.appendChild(tile);
+				}
+			}
+		});
+
+		return preview;
+	};
+
+	const showLayoutDialog = (game, layoutDefinitions, layoutSummaries, currentLayoutId, onLayoutSelected, onBack) => {
+		setDialogVariant(game, 'wide');
+		prepareDialog(game, 'chooseLayoutTitle', '');
+
+		const intro = document.createElement('p');
+		intro.textContent = translate('chooseLayoutContent');
+		intro.className = 'mb-4 text-sm md:text-base text-gray-600';
+
+		const grid = document.createElement('div');
+		grid.className = 'grid grid-cols-2 gap-3 md:grid-cols-3';
+
+		layoutDefinitions.forEach(layoutDefinition => {
+			const card = document.createElement('button');
+			const preview = createLayoutPreview(layoutDefinition);
+			const summary = layoutSummaries[layoutDefinition.id] || {
+				tileCount: 0,
+				openTileCount: 0,
+				layerCount: layoutDefinition.pattern.length,
+			};
+			const isSelected = layoutDefinition.id === currentLayoutId;
+			const name = document.createElement('span');
+			const nameText = getLayoutName(layoutDefinition);
+
+			card.type = 'button';
+			card.onclick = () => onLayoutSelected(layoutDefinition.id);
+			card.className = 'flex flex-col items-center rounded-2xl border-2 bg-white px-3 py-3 text-center shadow-sm transition-all duration-200';
+			card.title = `${nameText} - ${translate('layoutTiles')}: ${summary.tileCount}, ${translate('layoutOpen')}: ${summary.openTileCount}, ${translate('layoutLayers')}: ${summary.layerCount}`;
+			card.setAttribute('aria-label', card.title);
+			if (isSelected) {
+				card.classList.add('border-green-500', 'bg-green-50', 'shadow-md');
+			} else {
+				card.classList.add('border-slate-200', 'hover:border-sky-400', 'hover:bg-sky-50');
+			}
+
+			name.textContent = nameText;
+			name.className = 'mt-3 text-xs font-semibold leading-tight text-slate-700 md:text-sm';
+
+			card.appendChild(preview);
+			card.appendChild(name);
+			grid.appendChild(card);
+		});
+
+		game.dialogContent.innerHTML = '';
+		game.dialogContent.appendChild(intro);
+		game.dialogContent.appendChild(grid);
+		appendDialogButtons(game, [
+			{ text: 'back', action: onBack, color: 'gray' }
+		]);
+		game.messageBox.classList.remove('hidden-dialog');
+	};
+
+	const showDialog = (game, title, content, buttons) => {
+		setDialogVariant(game, 'default');
+		prepareDialog(game, title, content);
+
+		appendDialogButtons(game, buttons);
 		game.messageBox.classList.remove('hidden-dialog');
 	};
 
@@ -391,6 +598,7 @@
 		draw,
 		resizeCanvas,
 		scheduleResize,
+		showLayoutDialog,
 		showDialog,
 	};
 

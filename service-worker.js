@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mahjong-solitaire-v4';
+const CACHE_NAME = 'mahjong-solitaire-v5';
 const TILE_IMAGES = [
   'tiles/1m.png', 'tiles/2m.png', 'tiles/3m.png', 'tiles/4m.png', 'tiles/5m.png', 'tiles/6m.png', 'tiles/7m.png', 'tiles/8m.png', 'tiles/9m.png',
   'tiles/1p.png', 'tiles/2p.png', 'tiles/3p.png', 'tiles/4p.png', 'tiles/5p.png', 'tiles/6p.png', 'tiles/7p.png', 'tiles/8p.png', 'tiles/9p.png',

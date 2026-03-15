@@ -33,6 +33,7 @@ const game = {
 };
 
 const layoutAnalysisCache = new WeakMap();
+const layoutSummaryCache = new WeakMap();
 const seedAlphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 const getPositionKey = ({ x, y, z }) => `${x},${y},${z}`;
@@ -56,6 +57,22 @@ const getLayoutPositions = (pyramidLayout) => {
 };
 
 const countTilesInLayout = (pyramidLayout) => getLayoutPositions(pyramidLayout).length;
+
+const getLayoutSummary = (pyramidLayout) => {
+	if (layoutSummaryCache.has(pyramidLayout)) {
+		return layoutSummaryCache.get(pyramidLayout);
+	}
+
+	const analysis = createLayoutAnalysis(pyramidLayout);
+	const summary = {
+		tileCount: analysis.positions.length,
+		openTileCount: getFreePositionIndices(analysis.fullMask, analysis).length,
+		layerCount: pyramidLayout.length,
+	};
+
+	layoutSummaryCache.set(pyramidLayout, summary);
+	return summary;
+};
 
 const createLayoutAnalysis = (pyramidLayout) => {
 	if (layoutAnalysisCache.has(pyramidLayout)) {
@@ -362,6 +379,99 @@ const findSolvablePairSequence = (pyramidLayout, seed) => {
 	]);
 };
 
+const createPairDescriptors = (pairSequence) => pairSequence.map((pair, pairIndex) => {
+	const [firstPosition, secondPosition] = pair;
+
+	return {
+		pairIndex,
+		centroidX: (firstPosition.x + secondPosition.x) / 2,
+		centroidY: (firstPosition.y + secondPosition.y) / 2,
+		centroidZ: (firstPosition.z + secondPosition.z) / 2,
+	};
+});
+
+const buildValuePairGroups = (pairSequence, pyramidLayout, seed) => {
+	const positions = getLayoutPositions(pyramidLayout);
+	const descriptors = createPairDescriptors(pairSequence);
+	const pairCount = descriptors.length;
+
+	if (pairCount % 2 !== 0) {
+		throw new Error('The removal sequence must contain an even number of pairs.');
+	}
+
+	if (pairCount === 0) {
+		return [];
+	}
+
+	const xValues = positions.map(position => position.x);
+	const yValues = positions.map(position => position.y);
+	const zValues = positions.map(position => position.z);
+	const minX = Math.min(...xValues);
+	const maxX = Math.max(...xValues);
+	const minY = Math.min(...yValues);
+	const maxY = Math.max(...yValues);
+	const minZ = Math.min(...zValues);
+	const maxZ = Math.max(...zValues);
+	const xRange = Math.max(1, maxX - minX);
+	const yRange = Math.max(1, maxY - minY);
+	const zRange = Math.max(1, maxZ - minZ);
+	const centerX = (minX + maxX) / 2;
+	const centerY = (minY + maxY) / 2;
+	const noiseRandom = createSeededRandom(hashSeed(seed) + pairCount * 97);
+	const candidates = [];
+
+	for (let firstIndex = 0; firstIndex < pairCount; firstIndex++) {
+		for (let secondIndex = firstIndex + 1; secondIndex < pairCount; secondIndex++) {
+			const firstDescriptor = descriptors[firstIndex];
+			const secondDescriptor = descriptors[secondIndex];
+			const stepDistance = pairCount > 1
+				? Math.abs(firstIndex - secondIndex) / (pairCount - 1)
+				: 0;
+			const xDistance = Math.abs(firstDescriptor.centroidX - secondDescriptor.centroidX) / xRange;
+			const yDistance = Math.abs(firstDescriptor.centroidY - secondDescriptor.centroidY) / yRange;
+			const zDistance = Math.abs(firstDescriptor.centroidZ - secondDescriptor.centroidZ) / zRange;
+			const spatialDistance = (xDistance + yDistance + zDistance) / 3;
+			const oppositeHorizontalSides =
+				(firstDescriptor.centroidX - centerX) * (secondDescriptor.centroidX - centerX) < 0 ? 1 : 0;
+			const oppositeVerticalSides =
+				(firstDescriptor.centroidY - centerY) * (secondDescriptor.centroidY - centerY) < 0 ? 1 : 0;
+			const proximityPenalty = spatialDistance < 0.25 ? (0.25 - spatialDistance) / 0.25 : 0;
+			const sameBandPenalty = xDistance < 0.2 && yDistance < 0.2 ? 1 : 0;
+			const score =
+				stepDistance * 6 +
+				spatialDistance * 4 +
+				oppositeHorizontalSides * 1.5 +
+				oppositeVerticalSides * 0.75 -
+				proximityPenalty * 2 -
+				sameBandPenalty * 1.5 +
+				noiseRandom() * 0.001;
+
+			candidates.push({ firstIndex, secondIndex, score });
+		}
+	}
+
+	candidates.sort((firstCandidate, secondCandidate) => secondCandidate.score - firstCandidate.score);
+
+	const pairedIndices = Array(pairCount).fill(false);
+	const pairGroups = [];
+
+	for (const candidate of candidates) {
+		if (pairedIndices[candidate.firstIndex] || pairedIndices[candidate.secondIndex]) {
+			continue;
+		}
+
+		pairedIndices[candidate.firstIndex] = true;
+		pairedIndices[candidate.secondIndex] = true;
+		pairGroups.push([candidate.firstIndex, candidate.secondIndex]);
+	}
+
+	if (pairGroups.length !== pairCount / 2) {
+		throw new Error('Could not assign tile values across the solvable removal sequence.');
+	}
+
+	return pairGroups;
+};
+
 const createSolvableTileSet = (pyramidLayout, seed) => {
 	const numericSeed = hashSeed(seed);
 	const totalTiles = countTilesInLayout(pyramidLayout);
@@ -383,16 +493,16 @@ const createSolvableTileSet = (pyramidLayout, seed) => {
 	const valueRandom = createSeededRandom(numericSeed);
 	const availableTileTypes = [...tileTypes];
 	shuffleArray(availableTileTypes, valueRandom);
-
-	const pairValues = availableTileTypes
-		.slice(0, uniqueValueCount)
-		.flatMap(tileValue => [tileValue, tileValue]);
-	shuffleArray(pairValues, valueRandom);
+	const pairGroups = buildValuePairGroups(pairSequence, pyramidLayout, seed);
 
 	const valueByPositionKey = new Map();
-	pairSequence.forEach((pair, pairIndex) => {
-		for (const position of pair) {
-			valueByPositionKey.set(getPositionKey(position), pairValues[pairIndex]);
+	pairGroups.forEach(([firstPairIndex, secondPairIndex], groupIndex) => {
+		const tileValue = availableTileTypes[groupIndex];
+
+		for (const pairIndex of [firstPairIndex, secondPairIndex]) {
+			for (const position of pairSequence[pairIndex]) {
+				valueByPositionKey.set(getPositionKey(position), tileValue);
+			}
 		}
 	});
 
@@ -765,7 +875,7 @@ const initBrowserApp = async () => {
 			{ text: 'howToPlay', action: showInstructions, color: 'gray' },
 			{ text: 'restart', action: restartGame, color: 'yellow' },
 			{ text: 'newGame', action: newGame, color: 'blue' },
-			{ text: 'changeLayout', action: showLayoutSelector, color: 'gray' },
+			{ text: 'changeLayout', action: showLayoutSelector, color: 'blue' },
 		]);
 	}
 
@@ -792,13 +902,21 @@ const initBrowserApp = async () => {
 	}
 
 	function showLayoutSelector() {
-		const buttons = ui.getLayoutDefinitions().map(layoutDefinition => ({
-			text: ui.getLayoutName(layoutDefinition),
-			action: () => changeLayout(layoutDefinition.id),
-			color: layoutDefinition.id === game.layoutId ? 'green' : 'blue',
-		}));
-		buttons.push({ text: 'back', action: showGameMenu, color: 'gray' });
-		ui.showDialog(game, 'chooseLayoutTitle', 'chooseLayoutContent', buttons);
+		const layoutSummaries = Object.fromEntries(
+			ui.getLayoutDefinitions().map(layoutDefinition => [
+				layoutDefinition.id,
+				getLayoutSummary(layoutDefinition.pattern),
+			])
+		);
+
+		ui.showLayoutDialog(
+			game,
+			ui.getLayoutDefinitions(),
+			layoutSummaries,
+			game.layoutId,
+			changeLayout,
+			showGameMenu
+		);
 	}
 
 	function showInstructions() {
@@ -879,6 +997,7 @@ const mahjongLogic = {
 	startGameLogic,
 	checkWinLoseConditionLogic,
 	isFreeLogic,
+	getLayoutSummary,
 	saveGameStateLogic,
 	loadGameStateLogic,
 	clearSavedGameStateLogic: clearSavedGameState
@@ -898,6 +1017,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		getPositionKey,
 		getLayoutPositions,
 		countTilesInLayout,
+		getLayoutSummary,
 		createLayoutAnalysis,
 		buildOccupancyMask,
 		isPositionFreeInMask,
