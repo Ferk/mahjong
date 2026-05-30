@@ -970,6 +970,7 @@ const initBrowserApp = async () => {
 		}
 
 		buttons.push({ text: 'restart', action: restartGame, color: 'yellow' });
+		buttons.push({ text: 'changeLayout', action: showLayoutSelector, color: 'blue' });
 		buttons.push({ text: 'newGame', action: newGame, color: 'blue' });
 
 		effectFunction(() => ui.showDialog(game, title, content, buttons));
